@@ -27,8 +27,9 @@ use constant TMY => 1; # Typisches meteorologisches Jahr
 
 my $profile = $ARGV[0]; # Profildatei
 my $items = 0; # Zahl der verwendeten Messpunkte pro Minute
-my $solar__sum = 0;
-my $night__sum = 0;
+my $PV_bright_sum = 0;
+my $bright_sum = 0;
+my $night_sum = 0;
 my $load_sum = 0;
 
 my ($month, $day, $hour) = (1, 1, 0);
@@ -66,8 +67,8 @@ sub get_profile {
             my $point = $sources[$item];
             $load_by_date[$month][$day][$hour][$item] = $point;
             $load_sum += $point;
-            $solar__sum += $point if 9 <= $hour && $hour < 15;
-            $night__sum += $point if $hour < 6 || 18 <= $hour;
+            $bright_sum += $point if 9 <= $hour && $hour < 15;
+            $night_sum += $point if $hour < 6 || 18 <= $hour;
         }
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
@@ -79,11 +80,11 @@ sub get_profile {
 
 get_profile($profile);
 $load_sum /= $items;
-$solar__sum /= $items;
-$night__sum /= $items;
+$bright_sum /= $items;
+$night_sum /= $items;
 print "Last-Datenpunkte pro Stunde = $items\n";
-print "Lastanteil von 9-15 Uhr MEZ = ".int($solar__sum / $load_sum * 100)."%\n";
-print "Lastanteil von 18-6 Uhr MEZ = ".int($night__sum / $load_sum * 100)."%\n";
+print "Lastanteil von 9-15 Uhr MEZ = ".int($bright_sum / $load_sum * 100)."%\n";
+print "Lastanteil von 18-6 Uhr MEZ = ".int($night_sum / $load_sum * 100)."%\n";
 print "Verbrauch gemäß Lastprofil  =".kWh($load_sum)."\n";
 
 ################################################################################
@@ -106,6 +107,7 @@ my $load_scale = $simulated_load ? 1000 * $simulated_load / $load_sum : 1;
 my $power_limit = $ARGV[5]; # default none
 my $limitation_PVout_loss = 0;
 my $limitation_usage_loss = 0;
+my $hours_limit_loss = 0;
 my $hours_usage_loss = 0;
 my @PV_used;
 my $PV_used_sum = 0;
@@ -173,12 +175,14 @@ sub timeseries {
         if ($power_limit && $power > $power_limit) {
             $power_loss = ($power - $power_limit) * $system_efficiency;
             $limitation_PVout_loss += $power_loss;
+            $hours_limit_loss++;
             $power = $power_limit;
             # print "$year-$month-$day:$hour:$minute\tPV=".int($power)."\tlimit=".int($power_limit)."\tloss=".int($limitation_PVout_loss)."\t$_\n";
         }
         $power *= $system_efficiency;
         $PV_out[$month][$day][$hour] += $power;
         $PV_out_sum += $power;
+        $PV_bright_sum += $power if 9 <= $hour && $hour < 15;
 
         # Faktor $load_scale herausziehen zur Optimierung der inneren Schleife
         my $effective_power = $power / $load_scale;
@@ -198,7 +202,7 @@ sub timeseries {
             if ($power_loss && $point > $effective_power) {
                 $limitation_usage_loss +=
                     min($point - $effective_power, $power_loss) / $items;
-                $hours_usage_loss++;
+                $hours_usage_loss++; # will be normalized by $items
             }
         }
         # $sum_needed += $needed * $load_scale; # pro Stunde
@@ -219,8 +223,10 @@ sub timeseries {
     $PV_gross /= $years;
     $limitation_PVout_loss /= $years;
     $PV_out_sum /= $years;
+    $PV_bright_sum /= $years;
     $PV_used_sum /= $years;
     $limitation_usage_loss *= $load_scale / $years;
+    $hours_limit_loss /= $years;
     $hours_usage_loss /= ($items * $years);
     # $sum_needed /= $items;
     # die "Inconsistent load calculation: sum = $sum vs. needed = $sum_needed"
@@ -230,16 +236,20 @@ sub timeseries {
 timeseries($ARGV[1]);
 
 print "Haushalts-Stromverbrauch    =".kWh($load_sum)."\n";
-print "Maximallast                 =".W($load_max)." am $load_max_time\n";
+#print "Maximallast                 =".W($load_max)." am $load_max_time\n";
 print "PV-Bruttoleistung Maximum   =".W($PV_max)." am $PV_max_time\n";
 print "PV-Nomialleistung           =".W($nominal_power)."p\n";
 print "PV-Bruttoertrag             =".kWh($PV_gross)."\n";
 print "Ertrag nach Wechselrichtung =".kWh($PV_out_sum).
     " bei Systemwirkungsgrad ".($system_efficiency * 100)."%\n";
+print "Ertragsanteil 9-15 Uhr MEZ  =   ".
+    int($PV_bright_sum / $PV_out_sum * 100)."%\n";
 print "PV-Netto-Abregelungsverlust =".kWh($limitation_PVout_loss).
+    " während ".int($hours_limit_loss)." h".
     " durch Limitierung auf $power_limit W\n" if $power_limit;
-print "Eigenverbrauchsverlust      =".kWh($limitation_usage_loss)." durch die ".
-    "Limitierung; während ".int($hours_usage_loss)." h\n" if $power_limit;
+print "Eigenverbrauchsverlust      =".kWh($limitation_usage_loss).
+    " während ".int($hours_usage_loss)." h".
+    " durch die Limitierung\n" if $power_limit;
 print "Eigenverbrauch              =".kWh($PV_used_sum)."\n";
 print "Eigenverbrauchsanteil       =   ".
     int($PV_used_sum / $PV_out_sum * 100)."% vom Ertrag\n";

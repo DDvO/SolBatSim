@@ -37,17 +37,15 @@ use constant L8  =>  9; # 65% 8001 nahe 8000
 use constant L9  => 46; # 63% 8635 größter Jahresverbrauch
 
 use constant N => 24 * 365; # Nur zum Debugging
-use constant ITEMS => 74;   # Maximalzahl der Datensätze pro Stunde
+use constant ITEMS => 60; # 74; # Ziel-Anzahl der Datensätze pro Stunde
 use constant DELTA => 74/2; # Verschiebung der Datensätze innerhalb einer Stunde
 
 my $profile = $ARGV[0]; # Profildatei
 my $items = 0; # Zahl der verwendeten Messpunkte pro Minute
-my $solar_time_sum = 0;
-my $night_time_sum = 0;
-my $sum = 0;
 
 sub kWh { return sprintf("%5d kWh", int(shift()/1000)); }
 sub W   { return sprintf("%5d W"  , int(shift())); }
+sub round { return int(.5 + shift); }
 
 my ($month, $day, $hour) = (1, 1, 0);
 sub adjust_day_month {
@@ -64,11 +62,13 @@ sub adjust_day_month {
 }
 
 my @load_by_hour;
+my @load_by_day;
+my @avg_load_by_day;
 
 sub synthesize_profile {
     my $file = shift;
     open(my $LOAD, '<', $file) or die "Could not open lood file $file $!\n";
-    my ($hour_per_year, $minute, $item, $k) = (0, 0, 0, 0);
+    my ($day_per_year, $hour_per_year, $minute, $item, $k) = (0, 0, 0, 0, 0);
     # https://perlmaven.com/how-to-read-a-csv-file-using-perl
     while (my $line = <$LOAD>) {
         if (
@@ -101,8 +101,18 @@ sub synthesize_profile {
             # my $point = ++$k % 4 == 3 ? $sources[L32-1] :
             #     $k % 4 == 2 ? $sources[L33-1] :
             #     $k % 4 == 1 ? $sources[L5-1] : $sources[L0-1];
-            my $point = $sources[($k++ + DELTA) % ITEMS];
+            # my $point = $sources[($k++ + DELTA) % ITEMS];
+            my $point = $sources[(6691 <= $hour_per_year &&
+                                  $hour_per_year < 7066 ? 31 : 17) - 1];
             $load_by_hour[$hour_per_year][$item] += $point;
+
+            my ($n, $sum) = ($#sources + 1, 0);
+            for (my $i = 0; $i < $n; $i++) {
+                $sum += $sources[$i];
+            }
+                $load_by_day[$day_per_year] += $point;
+            $avg_load_by_day[$day_per_year] += $sum / $n;
+
             # print "$file " if $hour_per_year == N && $item == 0;
             # print "$item:$point," if $hour_per_year == N;
             $item++;
@@ -121,25 +131,44 @@ sub synthesize_profile {
             #print "\n" if $hour_per_year == N;
             #last if $hour_per_year == N + 2;
             $hour_per_year++;
+            $day_per_year++ if $hour % 24 == 0;
         }
     }
     close $LOAD;
 }
 
+my $sum = 0;
+my $solar_time_sum = 0;
+my $night_time_sum = 0;
 sub save_profile {
     my $file = shift;
     open(my $OUT, '>', $file) or die "Could not open profile file $file $!\n";
 
     $hour = 0;
+    my $day_per_year = 0;
     for (my $hour_per_year = 0; $hour_per_year < 24 * 365; $hour_per_year++) {
         print $OUT sprintf("%02d", $month)."-".sprintf("%02d", $day).":"
             .sprintf("%02d", $hour).",";
+
+        # Vorbereitung Normierung
+        my $factor = 1;
+        # auf Durchschnitt aller Haushalte pro Tag:
+        $factor = $avg_load_by_day[$day_per_year]
+            / $load_by_day[$day_per_year] if $load_by_day[$day_per_year] != 0;
+        # auf 3000 kWh/a:
+        $factor *= 3000000 / 4044002;
+
         for (my $item = 0; $item < $items; $item++) {
             my $point = $load_by_hour[$hour_per_year][$item];
+
             # Nach grober Normierung auf 3000 kWh/a mit abwechselnd L1 und L5
             # mit geraden Minuten + Minute 1 + Minute 31:
             # Feine Normierung auf 3000 kWh/a: geringfügige Streckung
-            # $point = int($point * 3000000000 / 2916807575);
+            # $point *= 3000000000 / 2916807575;
+
+            # Normierung auf Durchschnitt aller Haushalte pro Tag:
+            $point = round($point * $factor);
+
             print $OUT "$point,";
             $sum += $point;
             $solar_time_sum += $point if 9 <= $hour && $hour < 15;
@@ -149,6 +178,7 @@ sub save_profile {
 
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
+        $day_per_year++ if $hour == 0;
     }
     close $OUT;
 }

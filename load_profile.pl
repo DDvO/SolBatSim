@@ -19,6 +19,7 @@ use warnings;
 # 2391  4363  3390  6089  4784  5560  4287  4980  6535  4494
 # 4569  5220  6944  5953  6761  3615  4958  5229  6944  6224
 # 4323  4837  4342  4266
+# Durchschnitt: 4044
 
 use constant L1  =>  6; # 54% 1398 kleinster Jahresverbrauch
 use constant L2  => 24; # 57% 1847 nahe 2000
@@ -36,16 +37,25 @@ use constant L6  => 42; # 72% 6041 nahe 6000
 use constant L8  =>  9; # 65% 8001 nahe 8000
 use constant L9  => 46; # 63% 8635 größter Jahresverbrauch
 
-use constant N => 24 * 365; # Nur zum Debugging
+use constant L_days    =>   17; # 5924, repräsentativ bzgl. Tageszeit
+use constant L_subst   =>   64; # 5953, ähnlicher Jahresverbrauch
+#use constant L_subst   =>   31;
+use constant Subst_beg => 6691; # Startstunde Urlaubsloch von L_days: 10-06:19
+use constant Subst_end => 7066; # Endstunde   Urlaubsloch von L_days: 10-22:10
+
 use constant ITEMS => 60; # 74; # Ziel-Anzahl der Datensätze pro Stunde
 use constant DELTA => 74/2; # Verschiebung der Datensätze innerhalb einer Stunde
+
+use constant N => 24 * 365; # Nur zum Debugging
+
+use constant YearHours => 24 * 365;
+use constant Normierung => 1;
 
 my $profile = $ARGV[0]; # Profildatei
 my $items = 0; # Zahl der verwendeten Messpunkte pro Minute
 
-sub kWh { return sprintf("%5d kWh", int(shift()/1000)); }
-sub W   { return sprintf("%5d W"  , int(shift())); }
 sub round { return int(.5 + shift); }
+sub percent { return sprintf("%2d"    , round(shift() *  100)); }
 
 my ($month, $day, $hour) = (1, 1, 0);
 sub adjust_day_month {
@@ -61,6 +71,7 @@ sub adjust_day_month {
     }
 }
 
+#my @load_by_elem;
 my @load_by_hour;
 my @load_by_day;
 my @avg_load_by_day;
@@ -90,6 +101,9 @@ sub synthesize_profile {
             ) {
             chomp $line;
             my @sources = split "," , $line;
+            my $n = $#sources;
+            shift @sources; # ignore date & time info
+
             # my $point = $sources[L34-1];
             # Bei Normierung auf 1500 und 3003:
             # my $point = $minute % 2 == 0 ? $sources[L0-1] : $sources[L5-1];
@@ -102,12 +116,14 @@ sub synthesize_profile {
             #     $k % 4 == 2 ? $sources[L33-1] :
             #     $k % 4 == 1 ? $sources[L5-1] : $sources[L0-1];
             # my $point = $sources[($k++ + DELTA) % ITEMS];
-            my $point = $sources[(6691 <= $hour_per_year &&
-                                  $hour_per_year < 7066 ? 31 : 17) - 1];
-            $load_by_hour[$hour_per_year][$item] += $point;
+            my $point = $sources[L_days - 1];
+            $point = $sources[L_subst - 1] if L_subst
+                && Subst_beg <= $hour_per_year && $hour_per_year < Subst_end;
+            $load_by_hour[$hour_per_year][$item] = $point;
 
-            my ($n, $sum) = ($#sources + 1, 0);
+            my $sum = 0;
             for (my $i = 0; $i < $n; $i++) {
+            #   $load_by_elem[$hour_per_year][$item][$i] += $sources[$i];
                 $sum += $sources[$i];
             }
                 $load_by_day[$day_per_year] += $point;
@@ -117,9 +133,9 @@ sub synthesize_profile {
             # print "$item:$point," if $hour_per_year == N;
             $item++;
 
-            # Fülle ggf. den Rest auf mit übrigen Daten aus letzer Minute
+            # Fülle ggf. den Rest auf mit übrigen Daten aus letzter Minute
             while ($item >= 60 && ITEMS > 60 && $item < ITEMS) {
-                $load_by_hour[$hour_per_year][$item++] +=
+                $load_by_hour[$hour_per_year][$item++] =
                     $sources[($k++ + DELTA)% ITEMS];
             }
         }
@@ -131,7 +147,7 @@ sub synthesize_profile {
             #print "\n" if $hour_per_year == N;
             #last if $hour_per_year == N + 2;
             $hour_per_year++;
-            $day_per_year++ if $hour % 24 == 0;
+            $day_per_year++ if $hour_per_year % 24 == 0;
         }
     }
     close $LOAD;
@@ -143,31 +159,53 @@ my $night_time_sum = 0;
 sub save_profile {
     my $file = shift;
     open(my $OUT, '>', $file) or die "Could not open profile file $file $!\n";
+    if (Normierung) {
+        print $OUT "# Lastprofil ".L_days;
+        print $OUT ", aber im Oktober zwischen Stunde ".Subst_beg.
+            " und ".Subst_end." Lastprofil ".L_subst if L_subst;
+        print $OUT ", tageweise normiert ".
+            "auf durchschnittliche tgl. Last aller Haushalte\n";
+        print $OUT "# Lastprofil ".L_days."\n" if L_subst;
+    }
 
     $hour = 0;
     my $day_per_year = 0;
     for (my $hour_per_year = 0; $hour_per_year < 24 * 365; $hour_per_year++) {
+        print $OUT "# Lastprofil ".L_days."\n"
+            if Normierung && L_subst && $hour_per_year == Subst_beg;
+        print $OUT "# Lastprofil ".L_subst."\n"
+            if Normierung && L_subst && $hour_per_year == Subst_end;
         print $OUT sprintf("%02d", $month)."-".sprintf("%02d", $day).":"
             .sprintf("%02d", $hour).",";
 
         # Vorbereitung Normierung
-        my $factor = 1;
-        # auf Durchschnitt aller Haushalte pro Tag:
-        $factor = $avg_load_by_day[$day_per_year]
-            / $load_by_day[$day_per_year] if $load_by_day[$day_per_year] != 0;
-        # auf 3000 kWh/a:
-        $factor *= 3000000 / 4044002;
-
-        for (my $item = 0; $item < $items; $item++) {
-            my $point = $load_by_hour[$hour_per_year][$item];
+        my $factor = 1 if Normierung;
+        if (Normierung) {
+            # Normierung auf Durchschnitt aller Haushalte pro Tag:
+            $factor = $avg_load_by_day[$day_per_year]
+                / $load_by_day[$day_per_year]
+                if $load_by_day[$day_per_year] != 0;
+            # auf 3000 kWh/a:
+            # $factor *= 3000000 / 4044002;
+            # $factor *= 3000000 / 4685054;
 
             # Nach grober Normierung auf 3000 kWh/a mit abwechselnd L1 und L5
             # mit geraden Minuten + Minute 1 + Minute 31:
             # Feine Normierung auf 3000 kWh/a: geringfügige Streckung
-            # $point *= 3000000000 / 2916807575;
+            # $factor = 3000000000 / 2916807575;
+        }
 
-            # Normierung auf Durchschnitt aller Haushalte pro Tag:
-            $point = round($point * $factor);
+        for (my $item = 0; $item < $items; $item++) {
+            #print sprintf("%02d", $month)."-".sprintf("%02d", $day).":"
+            #    .sprintf("%02d", $hour).":".sprintf("%02d", $item).",";
+            #for (my $i = 0; $i < 74; $i++) {
+            #    print "".round($load_by_elem[$hour_per_year][$item][$i]);
+            #    print "".($i < 73 ? "," : "\n");
+            #}
+            my $point = $load_by_hour[$hour_per_year][$item];
+
+            $point = round($point * $factor) if Normierung;
+            print "Zero load at hour $hour_per_year item $item\n" unless $point;
 
             print $OUT "$point,";
             $sum += $point;
@@ -183,9 +221,10 @@ sub save_profile {
     close $OUT;
 }
 
-synthesize_profile("PL1.csv");
-synthesize_profile("PL2.csv");
-synthesize_profile("PL3.csv");
+#synthesize_profile("PL1.csv");
+#synthesize_profile("PL2.csv");
+#synthesize_profile("PL3.csv");
+synthesize_profile("PL.csv");
 
 save_profile($profile);
 
@@ -193,6 +232,6 @@ $sum /= $items;
 $solar_time_sum /= $items;
 $night_time_sum /= $items;
 print "Last-Datenpunkte pro Stunde = $items\n";
-print "Lastanteil von 9-15 Uhr MEZ = ".int($solar_time_sum / $sum * 100)."%\n";
-print "Lastanteil von 18-6 Uhr MEZ = ".int($night_time_sum / $sum * 100)."%\n";
-print "Verbrauch gemäß Lastprofil  =".kWh($sum)."\n";
+print "Lastanteil von 9-15 Uhr MEZ = ".percent($solar_time_sum / $sum)." %\n";
+print "Lastanteil von 18-6 Uhr MEZ = ".percent($night_time_sum / $sum)." %\n";
+print "Verbrauch gemäß Lastprofil  = ".($sum / 1000)." kWh\n";

@@ -77,21 +77,49 @@ my @load_by_hour;
 my @load_by_day;
 my @avg_load_by_day;
 
+sub parse_PV {
+    my $PV = shift;
+    my $PV_file = shift;
+    my $line;
+    while (($line = <$PV>) =~ m/^#/) {}
+    die "Cannot parse '$line' in $PV_file"
+        unless $line =~ m/^,,0,\d+-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)Z,(\d+)/;
+    my ($month, $days) = ($1, -1);
+    $days += 31 if --$month > 0;
+    $days += 28 if --$month > 0;
+    $days += 31 if --$month > 0;
+    $days += 30 if --$month > 0;
+    $days += 31 if --$month > 0;
+    $days += 30 if --$month > 0;
+    $days += 31 if --$month > 0;
+    $days += 31 if --$month > 0;
+    $days += 30 if --$month > 0;
+    $days += 31 if --$month > 0;
+    $days += 30 if --$month > 0;
+    $days += 31 if --$month > 0;
+    return (((($days + $2) * 24 + $3) * 60 + $4) * 60 + $5, $6);
+}
+
 sub synthesize_profile {
     my $file = shift;
     open(my $LOAD, '<', $file) or die "Could not open lood file $file $!\n";
+    my $PV_file = "PV_Power.csv";
+    my $PV;
+    open($PV, '<', $PV_file) or die "Could not open lood file $PV_file $!\n"
+        if Datenlog && $file eq "PL2.csv";
+    my ($PV_time, $PV_power) = parse_PV($PV, $PV_file) if $PV;
+
     my ($day_per_year, $hour_per_year, $minute, $item, $k) = (0, 0, 0, 0, 0);
     my ($year_before, $month_before, $day_before, $hour_before, $minute_before,
-        $second_before, $index) = (0, 1, 1, 0, 0, 0, 0) if Datenlog;
+        $second_before) = (0, 1, 1, 0, 0, 0, 0) if Datenlog;
     # https://perlmaven.com/how-to-read-a-csv-file-using-perl
     while (my $line = <$LOAD>) {
         if (Datenlog) {
             chomp $line;
-            next if $line =~ m/#/;
+            next if $line =~ m/^#/;
             my @sources = split "," , $line;
             if ($#sources < 4) { # EOF
-                $items += ($items_by_hour[$index++] = $item);
-                $hour_per_year++;
+                $items += ($items_by_hour[$hour_per_year++] = $item);
                 print "EOF after $hour_per_year hours in $file\n"
                     if $hour_per_year != YearHours;
                 last;
@@ -102,20 +130,21 @@ sub synthesize_profile {
                 unless $date =~ m/^(202\d)-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)/;
             my ($year, $month, $day, $hour, $minute, $second) =
                 ($1, $2, $3, $4, $5, $6);
-            if ($date =~ m/^(2021)-(11)-(30)T00:00:01/) {
-                ($year_before, $month_before, $day_before) = ($1, $2, $3);
-                $index = (365-32) * 24;
-            }
+            my $value = $sources[4];
             # print "Processing $year-$month-$day ..\n" if $day != $day_before;
 
-            my $value = $sources[4];
-            # print "Zero load in $file at $year-$month-$day".
-            #     "T$hour:$minute:$second\n" unless $value;
+            if ($PV) {
+                my $time = (($hour_per_year * 60) + $minute) * 60 + $second;
+                while ($time > $PV_time) {
+                    ($PV_time, $PV_power) = parse_PV($PV, $PV_file);
+                }
+                $value += $PV_power;
+            }
+            # print "Negative load ".sprintf("%4d", $value)." in $file at ".
+            #     "$year-$month-$day"."T$hour:$minute:$second\n" if $value < 0;
             if ($day != $day_before || $hour != $hour_before) {
-                $items += ($items_by_hour[$index] = $item);
+                $items += ($items_by_hour[$hour_per_year++] = $item);
                 $item = 0;
-                $hour_per_year++;
-                $index++;
                 my $hours_before = $day_before * 24 + $hour_before;
                 my $hours = $day * 24 + $hour;
                 if ($hours - $hours_before > 1) {
@@ -127,14 +156,13 @@ sub synthesize_profile {
                         if $year_before > 0 && $year != $year_before
                         || $month_before > 0 && $month != $month_before;
                     while (++$hours_before != $hours) {
-                        $items += ($items_by_hour[$index] = 1);
-                        $load_by_hour[$index++][$item] += $value; # reuse next value
-                        $hour_per_year++;
+                        $items += ($items_by_hour[$hour_per_year] = 1);
+                        $load_by_hour[$hour_per_year++][$item] +=
+                            $value; # reuse next value
                     }
                 }
             }
-            $index = 0 if $index == YearHours; # wrap at year end
-            $load_by_hour[$index][$item++] += $value;
+            $load_by_hour[$hour_per_year][$item++] += $value;
             ($year_before, $month_before, $day_before, $hour_before,
              $minute_before, $second_before) = ($year, $month, $day,
                                                 $hour, $minute, $second);
@@ -209,6 +237,7 @@ sub synthesize_profile {
         }
     }
     close $LOAD;
+    close $PV if $PV;
     $items /= $hour_per_year;
 }
 
@@ -263,13 +292,14 @@ sub save_profile {
             #    print "".round($load_by_elem[$hour_per_year][$item][$i]);
             #    print "".($i < 73 ? "," : "\n");
             #}
-            my $point = round($load_by_hour[$hour_per_year][$item]);
+            my $point = $load_by_hour[$hour_per_year][$item];
 
-            $point = round($point * $factor) if Normierung;
+            $point *= $factor if Normierung;
             # print "Zero load in $file at 20??-".sprintf("%02d-%02dT%02d",
             #                                        $month, $day, $hour).
             #     " item $item\n" unless $point;
 
+            point = round($point);
             print $OUT "$point,";
             $load += $point;
         }

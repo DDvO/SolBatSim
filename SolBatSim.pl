@@ -95,7 +95,10 @@ use constant BRIGHT_END   => 15; # end bright sunshine
 use constant NIGHT_START  => 18; # start no sunshine (yearly average)
 use constant NIGHT_END    =>  6; # end no shunshine (yearly average)
 
-my $items = 0; # number of load measure points per hour
+use constant YearHours => 24 * 365;
+
+my $sum_items = 0;
+my $items = 0; # number of load measure points in current hour
 my $load_max = 0;
 my $load_max_time;
 my $load_sum = 0;
@@ -120,59 +123,62 @@ sub adjust_day_month {
 ################################################################################
 # read load profile data
 
+my @items_by_hour;
 my @load_by_item;
 my @load_by_hour;
+my $hour_per_year = 0;
 sub get_profile {
     my $file = shift;
     open(my $IN, '<', $file) or die "Could not open profile file $file $!\n";
 
-    for (my $hour_per_year = 0; my $line = <$IN>; $hour_per_year++) {
+    while (my $line = <$IN>) {
         chomp $line;
         next if $line =~ m/^\s*#/; # skip comment line
         my @sources = split "," , $line;
         my $n = $#sources;
         shift @sources; # ignore date & time info
-        die "Inconsistent number of items: $n vs. $items per line in $file"
-            if $items != 0 && $items != $n;
-        $items = $n;
+        if ($items > 0 && $items != $n) {
+            print "Unequal number of items per line: $n vs. $items in $file\n";
+            $items = -1;
+        }
+        $items = $n if $items >= 0;
+        $sum_items += ($items_by_hour[$month][$day][$hour] = $n);
         my $load = 0;
-        for (my $item = 0; $item < $items; $item++) {
+        for (my $item = 0; $item < $n; $item++) {
             my $point = $sources[$item];
             if ($point > $load_max) {
                 $load_max = $point;
                 $load_max_time =
-                    time_string($month, $day, $hour, int(60 * $item / $items));
+                    time_string($month, $day, $hour, int(60 * $item / $n));
             }
             $load += $point;
             $load_by_item[$month][$day][$hour][$item] = $point;
         }
+        $load /= $n;
         $load_sum += $load;
-        $load_by_hour[$month][$day][$hour] += $load / $items;
+        $load_by_hour[$month][$day][$hour] += $load;
         $load_bright_sum += $load
             if BRIGHT_START <= $hour && $hour < BRIGHT_END;
         $load_night_sum += $load
             if $hour < NIGHT_END || NIGHT_START <= $hour;
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
+        $hour_per_year++;
     }
     close $IN;
     $month--;
     die "Got $month months rather than 12" if $month != 12;
-
-    $load_sum /= $items;
-    $load_bright_sum /= $items;
-    $load_night_sum /= $items;
 }
 
 get_profile($profile);
 
 my $p_txt = $en ? "load data points per hour  " : "Last-Datenpunkte pro Stunde";
-my $b_txt = $en ? "load portion 9 AM - 3 PM   " : "Lastanteil 9-15 h Uhr MEZ  ";
+my $b_txt = $en ? "load portion 9 AM - 3 PM   " : "Lastanteil 9 - 15 Uhr MEZ  ";
 my $n_txt = $en ? "load portion 6 PM - 6 AM   " : "Lastanteil 18 - 6 Uhr MEZ  ";
 my $t_txt = $en ? "total load acc. to profile " : "Verbrauch gemäß Lastprofil ";
 my $m_txt = $en ? "maximal load               " : "Maximallast                ";
 my $on    = $en ? "on" : "am";
-print "$p_txt =   $items\n";
+print "$p_txt =   ".round($sum_items / $hour_per_year)."\n";
 print "$b_txt =   ".percent($load_bright_sum / $load_sum)." %\n";
 print "$n_txt =   ".percent($load_night_sum  / $load_sum)." %\n";
 print "$t_txt =".kWh($load_sum)."\n";
@@ -288,8 +294,11 @@ sub timeseries {
         # my $needed = 0;
         my $usages = 0;
         my $losses = 0;
+        $items = $items_by_hour[$month][$day][$hour];
         for (my $item = 0; $item < $items; $item++) {
             my $point = $load_by_item[$month][$day][$hour][$item];
+            # print "load[$month][$day][$hour][".sprintf("%4d", $item).
+            #     "] = ".sprintf("%4d", $point)."\n" if $point <= 0;
             # $needed += $point;
             my $pv_used = min($effective_PV_power, $point); # PV own consumption
             $usages += $pv_used;
@@ -306,8 +315,8 @@ sub timeseries {
                 round($pv_used * $load_scale) if $max;
         }
         $PV_usage_loss[$month][$day][$hour] += $losses * $load_scale / $items;
-        $PV_usage_loss_sum += $losses;
-        # $sum_needed += $needed * $load_scale; # per hour
+        $PV_usage_loss_sum += $losses / $items;
+        # $sum_needed += $needed * $load_scale / $items; # per hour
         # print "$year-".time_string($month, $day, $hour, $minute).
         # "\tPV=".round($power)."\tPN=".round($needed)."\tPU=".round($usages).
         # "\t$_\n" if $power != 0 && m/^20160214:1010/; # m/^20....02:12/;
@@ -320,8 +329,8 @@ sub timeseries {
     close $IN;
     die "Got $months months rather than ".(12 * $years)
         if $months != $years * 12;
-    die "Got $hours hours rather than ".(8760 * $years)
-        if $hours != $years * 8760;
+    die "Got $hours hours rather than ".(YearHours * $years)
+        if $hours != $years * YearHours;
 
     $load_max *= $load_scale;
     $load_sum *= $load_scale;
@@ -331,9 +340,8 @@ sub timeseries {
     $PV_net_out_sum /= $years;
     $PV_net_bright_sum /= $years;
     $PV_used_sum /= $years;
-    $PV_usage_loss_sum *= $load_scale / ($items * $years);
-    $PV_usage_loss_hours /= ($items * $years);
-    # $sum_needed /= $items;
+    $PV_usage_loss_sum *= $load_scale / $years;
+    $PV_usage_loss_hours /= ($sum_items / $hours * $years);
     # die "Inconsistent load calculation: sum = $sum vs. needed = $sum_needed"
     #     if round($sum) != round($sum_needed);
 }

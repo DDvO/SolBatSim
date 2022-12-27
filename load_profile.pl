@@ -48,8 +48,8 @@ use constant DELTA => 74/2; # Verschiebung der Datensätze innerhalb einer Stund
 
 use constant N => 24 * 365; # Nur zum Debugging
 use constant YearHours => 24 * 365;
-use constant Normierung => 1;
-use constant Datenlog => 0;
+use constant Normierung => 0;
+use constant Datenlog => 1;
 
 my $profile = $ARGV[0]; # Profildatei
 
@@ -82,44 +82,58 @@ sub synthesize_profile {
     open(my $LOAD, '<', $file) or die "Could not open lood file $file $!\n";
     my ($day_per_year, $hour_per_year, $minute, $item, $k) = (0, 0, 0, 0, 0);
     my ($year_before, $month_before, $day_before, $hour_before, $minute_before,
-        $second_before, $index) = (0, 0, 0, 0, 0, 0, (365-32) * 24) if Datenlog;
+        $second_before, $index) = (0, 1, 1, 0, 0, 0, 0) if Datenlog;
     # https://perlmaven.com/how-to-read-a-csv-file-using-perl
     while (my $line = <$LOAD>) {
         if (Datenlog) {
             chomp $line;
+            next if $line =~ m/#/;
             my @sources = split "," , $line;
-            my $eof =  $#sources < 4;
-            my $date = $eof ? "2022-11-30T00:00:00" : $sources[3];
-            next unless $date =~ m/^202/;
-            die "Cannot parse entry after $hour_per_year hours in $file"
+            if ($#sources < 4) { # EOF
+                $items += ($items_by_hour[$index++] = $item);
+                $hour_per_year++;
+                print "EOF after $hour_per_year hours in $file\n"
+                    if $hour_per_year != YearHours;
+                last;
+            }
+
+            my $date = $sources[3];
+            die "Cannot parse '$line' after $hour_per_year hours in $file"
                 unless $date =~ m/^(202\d)-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)/;
-            my $value = $sources[4];
             my ($year, $month, $day, $hour, $minute, $second) =
                 ($1, $2, $3, $4, $5, $6);
+            if ($date =~ m/^(2021)-(11)-(30)T00:00:01/) {
+                ($year_before, $month_before, $day_before) = ($1, $2, $3);
+                $index = (365-32) * 24;
+            }
             # print "Processing $year-$month-$day ..\n" if $day != $day_before;
 
-            print "Zero load in $file at $year-$month-$day".
-                "T$hour:$minute:$second\n" unless $value || $eof;
-            if ($hour != $hour_before || $eof) {
+            my $value = $sources[4];
+            # print "Zero load in $file at $year-$month-$day".
+            #     "T$hour:$minute:$second\n" unless $value;
+            if ($day != $day_before || $hour != $hour_before) {
                 $items += ($items_by_hour[$index] = $item);
                 $item = 0;
                 $hour_per_year++;
                 $index++;
-                last if $hour_per_year == YearHours;
-                die "EOF after $hour_per_year hours in $file\n" if $eof;
-                if (($hour_before + 1) % 24 != $hour) {
+                my $hours_before = $day_before * 24 + $hour_before;
+                my $hours = $day * 24 + $hour;
+                if ($hours - $hours_before > 1) {
                     print "Gap in $file from ".
                         "$year_before-$month_before-$day_before".
                         "T$hour_before:$minute_before:$second_before to $year-".
                         "$month-$day"."T$hour:$minute:$second, load $value\n";
-                    while (++$hour_before % 24 != $hour) {
+                    die "Cannot handle gap over month limit"
+                        if $year_before > 0 && $year != $year_before
+                        || $month_before > 0 && $month != $month_before;
+                    while (++$hours_before != $hours) {
                         $items += ($items_by_hour[$index] = 1);
                         $load_by_hour[$index++][$item] += $value; # reuse next value
                         $hour_per_year++;
                     }
                 }
             }
-            $index = 0 if $index == YearHours;
+            $index = 0 if $index == YearHours; # wrap at year end
             $load_by_hour[$index][$item++] += $value;
             ($year_before, $month_before, $day_before, $hour_before,
              $minute_before, $second_before) = ($year, $month, $day,
@@ -249,10 +263,12 @@ sub save_profile {
             #    print "".round($load_by_elem[$hour_per_year][$item][$i]);
             #    print "".($i < 73 ? "," : "\n");
             #}
-            my $point = $load_by_hour[$hour_per_year][$item];
+            my $point = round($load_by_hour[$hour_per_year][$item]);
 
             $point = round($point * $factor) if Normierung;
-            print "Zero load at hour $hour_per_year item $item\n" unless $point;
+            # print "Zero load in $file at 20??-".sprintf("%02d-%02dT%02d",
+            #                                        $month, $day, $hour).
+            #     " item $item\n" unless $point;
 
             print $OUT "$point,";
             $load += $point;
@@ -270,14 +286,15 @@ sub save_profile {
     close $OUT;
 }
 
-#synthesize_profile("PL1.csv");
-#synthesize_profile("PL2.csv");
-#synthesize_profile("PL3.csv");
-synthesize_profile("PL.csv");
+#synthesize_profile("PV_Power.csv");
+synthesize_profile("PL1.csv");
+synthesize_profile("PL2.csv");
+synthesize_profile("PL3.csv");
+#synthesize_profile("PL.csv");
 
 save_profile($profile);
 
-print "Last-Datenpunkte pro Stunde = $items\n";
+print "Last-Datenpunkte pro Stunde = ".round($items)."\n";
 print "Lastanteil von 9-15 Uhr MEZ = ".percent($solar_time_sum / $sum)." %\n";
 print "Lastanteil von 18-6 Uhr MEZ = ".percent($night_time_sum / $sum)." %\n";
 print "Verbrauch gemäß Lastprofil  = ".($sum / 1000)." kWh\n";

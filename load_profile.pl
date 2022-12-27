@@ -47,12 +47,11 @@ use constant ITEMS => 60; # 74; # Ziel-Anzahl der Datensätze pro Stunde
 use constant DELTA => 74/2; # Verschiebung der Datensätze innerhalb einer Stunde
 
 use constant N => 24 * 365; # Nur zum Debugging
-
 use constant YearHours => 24 * 365;
 use constant Normierung => 1;
+use constant Datenlog => 0;
 
 my $profile = $ARGV[0]; # Profildatei
-my $items = 0; # Zahl der verwendeten Messpunkte pro Minute
 
 sub round { return int(.5 + shift); }
 sub percent { return sprintf("%2d"    , round(shift() *  100)); }
@@ -71,6 +70,8 @@ sub adjust_day_month {
     }
 }
 
+my $items = 0; # total number of load items
+my @items_by_hour;
 #my @load_by_elem;
 my @load_by_hour;
 my @load_by_day;
@@ -80,13 +81,56 @@ sub synthesize_profile {
     my $file = shift;
     open(my $LOAD, '<', $file) or die "Could not open lood file $file $!\n";
     my ($day_per_year, $hour_per_year, $minute, $item, $k) = (0, 0, 0, 0, 0);
+    my ($year_before, $month_before, $day_before, $hour_before, $minute_before,
+        $second_before, $index) = (0, 0, 0, 0, 0, 0, (365-32) * 24) if Datenlog;
     # https://perlmaven.com/how-to-read-a-csv-file-using-perl
     while (my $line = <$LOAD>) {
+        if (Datenlog) {
+            chomp $line;
+            my @sources = split "," , $line;
+            my $eof =  $#sources < 4;
+            my $date = $eof ? "2022-11-30T00:00:00" : $sources[3];
+            next unless $date =~ m/^202/;
+            die "Cannot parse entry after $hour_per_year hours in $file"
+                unless $date =~ m/^(202\d)-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)/;
+            my $value = $sources[4];
+            my ($year, $month, $day, $hour, $minute, $second) =
+                ($1, $2, $3, $4, $5, $6);
+            # print "Processing $year-$month-$day ..\n" if $day != $day_before;
+
+            print "Zero load in $file at $year-$month-$day".
+                "T$hour:$minute:$second\n" unless $value || $eof;
+            if ($hour != $hour_before || $eof) {
+                $items += ($items_by_hour[$index] = $item);
+                $item = 0;
+                $hour_per_year++;
+                $index++;
+                last if $hour_per_year == YearHours;
+                die "EOF after $hour_per_year hours in $file\n" if $eof;
+                if (($hour_before + 1) % 24 != $hour) {
+                    print "Gap in $file from ".
+                        "$year_before-$month_before-$day_before".
+                        "T$hour_before:$minute_before:$second_before to $year-".
+                        "$month-$day"."T$hour:$minute:$second, load $value\n";
+                    while (++$hour_before % 24 != $hour) {
+                        $items += ($items_by_hour[$index] = 1);
+                        $load_by_hour[$index++][$item] += $value; # reuse next value
+                        $hour_per_year++;
+                    }
+                }
+            }
+            $index = 0 if $index == YearHours;
+            $load_by_hour[$index][$item++] += $value;
+            ($year_before, $month_before, $day_before, $hour_before,
+             $minute_before, $second_before) = ($year, $month, $day,
+                                                $hour, $minute, $second);
+            next;
+        }
         if (
             # Normierung auf 1500 kWh/a durch Ausdünnung:
             # nimm 17 von 60 minütlichen Datenpunkten
             0 && ($minute == 1 || $minute == 3 || $minute == 5 ||
-                  $minute == 11 ||  $minute == 16 || $minute == 19 ||
+                  $minute == 11 || $minute == 16 || $minute == 19 ||
                   $minute == 24 || $minute == 27 || $minute == 32 ||
                   $minute == 35 || $minute == 40 || $minute == 43 ||
                   $minute == 48 || $minute == 51 || $minute == 53 ||
@@ -138,11 +182,11 @@ sub synthesize_profile {
                 $load_by_hour[$hour_per_year][$item++] =
                     $sources[($k++ + DELTA)% ITEMS];
             }
+            $items += ($items_by_hour[$hour_per_year] = $item);
         }
         $minute++;
         if ($minute == 60) {
             $minute = 0;
-            $items = $item;
             $item = 0;
             #print "\n" if $hour_per_year == N;
             #last if $hour_per_year == N + 2;
@@ -151,6 +195,7 @@ sub synthesize_profile {
         }
     }
     close $LOAD;
+    $items /= $hour_per_year;
 }
 
 my $sum = 0;
@@ -170,7 +215,7 @@ sub save_profile {
 
     $hour = 0;
     my $day_per_year = 0;
-    for (my $hour_per_year = 0; $hour_per_year < 24 * 365; $hour_per_year++) {
+    for (my $hour_per_year = 0; $hour_per_year < YearHours; $hour_per_year++) {
         print $OUT "# Lastprofil ".L_days."\n"
             if Normierung && L_subst && $hour_per_year == Subst_beg;
         print $OUT "# Lastprofil ".L_subst."\n"
@@ -195,7 +240,9 @@ sub save_profile {
             # $factor = 3000000000 / 2916807575;
         }
 
-        for (my $item = 0; $item < $items; $item++) {
+        my $load = 0;
+        my $n =  $items_by_hour[$hour_per_year];
+        for (my $item = 0; $item < $n; $item++) {
             #print sprintf("%02d", $month)."-".sprintf("%02d", $day).":"
             #    .sprintf("%02d", $hour).":".sprintf("%02d", $item).",";
             #for (my $i = 0; $i < 74; $i++) {
@@ -208,11 +255,13 @@ sub save_profile {
             print "Zero load at hour $hour_per_year item $item\n" unless $point;
 
             print $OUT "$point,";
-            $sum += $point;
-            $solar_time_sum += $point if 9 <= $hour && $hour < 15;
-            $night_time_sum += $point if $hour < 6 || 18 <= $hour;
+            $load += $point;
         }
         print $OUT "\n";
+        $load /= $n;
+        $sum            += $load;
+        $solar_time_sum += $load if 9 <= $hour && $hour < 15;
+        $night_time_sum += $load if $hour < 6 || 18 <= $hour;
 
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
@@ -228,9 +277,6 @@ synthesize_profile("PL.csv");
 
 save_profile($profile);
 
-$sum /= $items;
-$solar_time_sum /= $items;
-$night_time_sum /= $items;
 print "Last-Datenpunkte pro Stunde = $items\n";
 print "Lastanteil von 9-15 Uhr MEZ = ".percent($solar_time_sum / $sum)." %\n";
 print "Lastanteil von 18-6 Uhr MEZ = ".percent($night_time_sum / $sum)." %\n";

@@ -76,13 +76,15 @@ sub min { return $_[0] < $_[1] ? $_[0] : $_[1]; }
 sub max { return $_[0] > $_[1] ? $_[0] : $_[1]; }
 sub round { return int(.5 + shift); }
 
-my $at = $en ? "at" : "um";
+sub date_string {
+    return sprintf("%02d", shift)."-".sprintf("%02d", shift).
+        " ".($en ? "at" : "um")." ".sprintf("%02d", shift);
+}
 sub time_string {
-    return
-        sprintf("%02d", shift)."-".
-        sprintf("%02d", shift)." $at ".
-        sprintf("%02d", shift).":".
-        sprintf("%02d", shift);
+    return date_string(shift, shift, shift).sprintf(":%02d", int(shift));
+}
+sub index_string {
+    return date_string(shift, shift, shift).sprintf("h, index %4d", shift);
 }
 
 sub kWh     { return sprintf("%5d kWh", round(shift() / 1000)); }
@@ -90,10 +92,12 @@ sub W       { return sprintf("%5d W"  , round(shift()       )); }
 sub percent { return sprintf("%2d"    , round(shift() *  100)); }
 
 # all hours according to local time without switching for daylight saving
-use constant BRIGHT_START =>  9; # start bright sunshine
-use constant BRIGHT_END   => 15; # end bright sunshine
-use constant NIGHT_START  => 18; # start no sunshine (yearly average)
-use constant NIGHT_END    =>  6; # end no shunshine (yearly average)
+use constant BRIGHT_START  =>  9; # start bright sunshine time
+use constant BRIGHT_END    => 15; # end   bright sunshine time
+use constant EVENING_START => 18; # start evening
+use constant EVENING_END   => 24; # end   evening
+use constant NIGHT_START   =>  0; # start night (basic load)
+use constant NIGHT_END     =>  6; # end   night (basic load)
 
 use constant YearHours => 24 * 365;
 
@@ -101,9 +105,7 @@ my $sum_items = 0;
 my $items = 0; # number of load measure points in current hour
 my $load_max = 0;
 my $load_max_time;
-my $load_sum = 0;
-my $load_bright_sum = 0;
-my $load_night_sum = 0;
+my ($load_sum, $bright_sum, $evening_sum, $night_sum) = (0, 0, 0, 0);
 
 my ($month, $day, $hour) = (1, 1, 0);
 sub adjust_day_month {
@@ -131,6 +133,7 @@ sub get_profile {
     my $file = shift;
     open(my $IN, '<', $file) or die "Could not open profile file $file $!\n";
 
+    my $warned_just_before = 0;
     while (my $line = <$IN>) {
         chomp $line;
         next if $line =~ m/^\s*#/; # skip comment line
@@ -146,21 +149,31 @@ sub get_profile {
         my $load = 0;
         for (my $item = 0; $item < $n; $item++) {
             my $point = $sources[$item];
+            die "Error parsing load item: '$point' in $file line $."
+                unless $point =~ m/^\s*-?[\.\d]+\s*$/;
             if ($point > $load_max) {
                 $load_max = $point;
                 $load_max_time =
-                    time_string($month, $day, $hour, int(60 * $item / $n));
+                    time_string($month, $day, $hour, 60 * $item / $n);
             }
             $load += $point;
             $load_by_item[$month][$day][$hour][$item] = $point;
+            if ($point <= 0) {
+                print "Load on YYYY-".index_string($month, $day, $hour, $item).
+                    " = ".sprintf("%4d", $point)."\n"
+                    unless $warned_just_before;
+                $warned_just_before = 1;
+            } else {
+                $warned_just_before = 0;
+            }
         }
         $load /= $n;
-        $load_sum += $load;
         $load_by_hour[$month][$day][$hour] += $load;
-        $load_bright_sum += $load
-            if BRIGHT_START <= $hour && $hour < BRIGHT_END;
-        $load_night_sum += $load
-            if $hour < NIGHT_END || NIGHT_START <= $hour;
+        $load_sum    += $load;
+        $bright_sum  += $load if  BRIGHT_START <= $hour && $hour <  BRIGHT_END;
+        $evening_sum += $load if EVENING_START <= $hour && $hour < EVENING_END;
+        $night_sum   += $load if   NIGHT_START <= $hour && $hour <   NIGHT_END;
+
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
         $hour_per_year++;
@@ -173,15 +186,19 @@ sub get_profile {
 get_profile($profile);
 
 my $p_txt = $en ? "load data points per hour  " : "Last-Datenpunkte pro Stunde";
-my $b_txt = $en ? "load portion 9 AM - 3 PM   " : "Lastanteil 9 - 15 Uhr MEZ  ";
-my $n_txt = $en ? "load portion 6 PM - 6 AM   " : "Lastanteil 18 - 6 Uhr MEZ  ";
+my $s_txt = $en ? "load portion  9 AM -  3 PM " : "Lastanteil  9 - 15 Uhr MEZ ";
+my $e_txt = $en ? "load portion  6 PM - 12 PM " : "Lastanteil 18 - 24 Uhr MEZ ";
+my $n_txt = $en ? "load portion 12 AM -  6 AM " : "Lastanteil  0 -  6 Uhr MEZ ";
 my $t_txt = $en ? "total load acc. to profile " : "Verbrauch gemäß Lastprofil ";
+my $b_txt = $en ? "basic load                 " : "Grundlast                  ";
 my $m_txt = $en ? "maximal load               " : "Maximallast                ";
 my $on    = $en ? "on" : "am";
-print "$p_txt =   ".round($sum_items / $hour_per_year)."\n";
-print "$b_txt =   ".percent($load_bright_sum / $load_sum)." %\n";
-print "$n_txt =   ".percent($load_night_sum  / $load_sum)." %\n";
+print "$p_txt = ".sprintf("%4d", $sum_items / $hour_per_year)."\n";
+print "$s_txt =   ".percent($bright_sum  / $load_sum)." %\n";
+print "$e_txt =   ".percent($evening_sum / $load_sum)." %\n";
+print "$n_txt =   ".percent($night_sum   / $load_sum)." %\n";
 print "$t_txt =".kWh($load_sum)."\n";
+print "$b_txt =".W($night_sum / 365 / (NIGHT_END - NIGHT_START))."\n";
 print "$m_txt =".W($load_max)." $on $load_max_time\n";
 
 ################################################################################
@@ -218,7 +235,7 @@ sub timeseries {
     # my $sum_needed = 0;
     my $power_rate;
     my $power_provided = 0; # PVGIS default: none
-    my ($months, $hours) = (0, 0, 0);
+    my ($months, $hours) = (0, 0);
     while (<$IN>) {
         chomp;
         if (!$nominal_power_deflt && m/Nominal power.*? \(kWp\):\s*([\d\.]+)/) {
@@ -297,8 +314,6 @@ sub timeseries {
         $items = $items_by_hour[$month][$day][$hour];
         for (my $item = 0; $item < $items; $item++) {
             my $point = $load_by_item[$month][$day][$hour][$item];
-            # print "load[$month][$day][$hour][".sprintf("%4d", $item).
-            #     "] = ".sprintf("%4d", $point)."\n" if $point <= 0;
             # $needed += $point;
             my $pv_used = min($effective_PV_power, $point); # PV own consumption
             $usages += $pv_used;
@@ -493,5 +508,5 @@ print "$load_txt $en2        =" .kWh($load_sum)."\n";
 print "$use_with_lim_txt $de3=" .kWh($PV_used_sum)."\n";
 print "$use_loss_txt $de1    =" .kWh($PV_usage_loss_sum)." $during "
     .round($PV_usage_loss_hours)." h $lim $PV_limit W\n" if $PV_limit;
-print "$own_consumpt_txt         = $own_usage % $of_yield\n";
-print "$load_cover_txt           = $load_coverage % $of_consumption\n";
+print "$own_consumpt_txt       =   $own_usage % $of_yield\n";
+print "$load_cover_txt         =   $load_coverage % $of_consumption\n";

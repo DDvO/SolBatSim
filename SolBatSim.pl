@@ -75,6 +75,11 @@ while ($#ARGV >= 0) {
 sub min { return $_[0] < $_[1] ? $_[0] : $_[1]; }
 sub max { return $_[0] > $_[1] ? $_[0] : $_[1]; }
 sub round { return int(.5 + shift); }
+sub check_count {
+    my ($actual, $expected, $name, $file) = (shift, shift, shift, shift);
+    die "Got $actual $name rather than $expected from $file"
+        if $actual != $expected;
+}
 
 sub date_string {
     return sprintf("%02d", shift)."-".sprintf("%02d", shift).
@@ -180,7 +185,8 @@ sub get_profile {
     }
     close $IN;
     $month--;
-    die "Got $month months rather than 12" if $month != 12;
+    check_count($month, 12, "months", $file);
+    check_count($hour_per_year, YearHours, "hours", $file);
 }
 
 get_profile($profile);
@@ -342,10 +348,8 @@ sub timeseries {
         $hours++;
     }
     close $IN;
-    die "Got $months months rather than ".(12 * $years)
-        if $months != $years * 12;
-    die "Got $hours hours rather than ".(YearHours * $years)
-        if $hours != $years * YearHours;
+    check_count($months, 12 * $years, "months", $file);
+    check_count($hours, YearHours * $years, "hours", $file);
 
     $load_max *= $load_scale;
     $load_sum *= $load_scale;

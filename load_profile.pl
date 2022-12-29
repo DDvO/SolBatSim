@@ -65,8 +65,10 @@ use constant Datenlog => 1;
 
 my $profile = $ARGV[0]; # Profildatei
 
+# deliberately not using any extra packages like Math
+sub min { return $_[0] < $_[1] ? $_[0] : $_[1]; }
+sub max { return $_[0] > $_[1] ? $_[0] : $_[1]; }
 sub round { return int(.5 + shift); }
-sub percent { return sprintf("%2d"    , round(shift() *  100)); }
 
 my $en = 1;
 sub date_string {
@@ -80,6 +82,8 @@ sub index_string {
     return date_string(shift, shift, " at ", shift).
         sprintf("h, index %4d", shift);
 }
+
+sub percent { return sprintf("%2d", round(shift() *  100)); }
 
 my ($month, $day, $hour) = (1, 1, 0);
 sub adjust_day_month {
@@ -273,8 +277,8 @@ sub synthesize_profile {
         if ($minute == 60) {
             $minute = 0;
             $item = 0;
-            #print "\n" if $hour_per_year == N;
-            #last if $hour_per_year == N + 2;
+            # print "\n" if $hour_per_year == N;
+            # last if $hour_per_year == N + 2;
             $hour_per_year++;
             $day_per_year++ if $hour_per_year % 24 == 0;
         }
@@ -285,6 +289,7 @@ sub synthesize_profile {
 }
 
 my ($sum, $bright_sum, $evening_sum, $night_sum) = (0, 0, 0, 0);
+my $sum_negative = 0;
 
 sub save_profile {
     my $file = shift;
@@ -307,6 +312,7 @@ sub save_profile {
         print $OUT "# Lastprofil ".L_subst."\n"
             if Normierung && L_subst && $hour_per_year == Subst_end;
         print $OUT date_string($month, $day, ":", $hour).",";
+        my $n = $items_by_hour[$hour_per_year];
 
         # Vorbereitung Normierung
         my $factor = 1 if Normierung;
@@ -325,33 +331,78 @@ sub save_profile {
             # $factor = 3000000000 / 2916807575;
         }
 
-        my $load = 0;
-        my $n = $items_by_hour[$hour_per_year];
+        # try eliminating points <= 0 without changing sum in current hour
+        my ($before, $todo) = (0, 0);
+        my ($load, $negative_load) = (0, 0);
+        if (!HOUR_AVERAGE) {
+            # eliminate as far as possible using point before and future ones
+            for (my $item = 0; $item < $n; $item++) {
+                my $point = $load_by_hour[$hour_per_year][$item];
+                $point *= $factor if Normierung;
+                $point = round($point);
+                if ($point <= 0) {
+                    print "In $file on ".
+                        index_string($month, $day, $hour, $item).
+                        ", load = ".sprintf("%4d", $point)."\n"
+                        unless $warned_just_before;
+                    $negative_load -= $point;
+                    $warned_just_before = 1;
+                } else {
+                    $warned_just_before = 0;
+                }
+                $load += $point;
+                if ($todo + $point <= 0 && $before > 1) {
+                    my $delta = min($before - 1, -($todo + $point));
+                    $load_by_hour[$hour_per_year][$item - 1] -= $delta;
+                    $todo += $delta;
+                    ($todo, $point) = (0, $point + $todo) if $todo > 0;
+                }
+                if ($point <= 0 && $item < $n - 1) {
+                    $todo += $point - 1;
+                    $load_by_hour[$hour_per_year][$item] = $point = 1;
+                }
+                if ($todo < 0 && $item == $n - 1) {
+                    $load_by_hour[$hour_per_year][$item] = ($point += $todo);
+                }
+                $before = $point;
+            }
+            $todo = $before;
+        }
+        if (!HOUR_AVERAGE && $todo <= 0 && $load + $todo >= 1) {
+            # eliminate last point <= 0 using points from beginning of hour
+            $todo--;
+            $load_by_hour[$hour_per_year][$n - 1] = 1; # same as -= $todo;
+            for (my $item = 0; $todo < 0 && $item < $n - 1; $item++) {
+                my $point = $load_by_hour[$hour_per_year][$item];
+                if ($point > 1) {
+                    my $delta = min($point - 1, -$todo);
+                    $load_by_hour[$hour_per_year][$item] -= $delta;
+                    $todo += $delta;
+                }
+            }
+        }
+        $load = 0 if !HOUR_AVERAGE;
         for (my $item = 0; $item < $n; $item++) {
-            #print index_string($month, $day, $hour, $item).",";
-            #for (my $i = 0; $i < 74; $i++) {
-            #    print "".round($load_by_elem[$hour_per_year][$item][$i]);
-            #    print "".($i < 73 ? "," : "\n");
-            #}
+            # print index_string($month, $day, $hour, $item).",";
+            # for (my $i = 0; $i < 74; $i++) {
+            #     print "".round($load_by_elem[$hour_per_year][$item][$i]);
+            #     print "".($i < 73 ? "," : "\n");
+            # }
             my $point = $load_by_hour[$hour_per_year][$item];
 
-            $point *= $factor if Normierung;
+            $point *= $factor if Normierung && !HOUR_AVERAGE;
             if ($point <= 0) {
-                print "In $file on YYYY-".index_string($month, $day, $hour,
-                                                       $item).
+                print "In $file on ".index_string($month, $day, $hour, $item).
                     ", load = ".sprintf("%4d", $point)."\n"
-                    unless $warned_just_before;
-                $warned_just_before = 1;
-            } else {
-                $warned_just_before = 0;
             };
 
             if (!HOUR_AVERAGE) {
                 $point = round($point);
                 print $OUT "$point,";
             }
-            $load += $point;
+            $load += $point if !HOUR_AVERAGE;
         }
+        $sum_negative += ($negative_load / $n);
         $load /= $n;
         print $OUT round($load) if HOUR_AVERAGE;
         print $OUT "\n";
@@ -369,8 +420,8 @@ sub save_profile {
 
 #synthesize_profile("PV_Power.csv");
 synthesize_profile("PL1.csv");
-#synthesize_profile("PL2.csv");
-#synthesize_profile("PL3.csv");
+synthesize_profile("PL2.csv");
+synthesize_profile("PL3.csv");
 #synthesize_profile("PL.csv");
 
 save_profile($profile);
@@ -379,4 +430,5 @@ print "Last-Datenpunkte pro Stunde = ".round($items)."\n";
 print "Lastanteil  9 - 15 Uhr MEZ  = ".percent($bright_sum / $sum)." %\n";
 print "Lastanteil 18 - 24 Uhr MEZ  = ".percent($evening_sum / $sum)." %\n";
 print "Lastanteil  0 -  6 Uhr MEZ  = ".percent($night_sum / $sum)." %\n";
+print "Summe negativer Verbrauch   = ".($sum_negative / 1000)." kWh\n";
 print "Verbrauch gemäß Lastprofil  = ".($sum / 1000)." kWh\n";

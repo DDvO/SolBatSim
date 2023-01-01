@@ -3,8 +3,8 @@
 # Eigenverbrauchs-Simulation mit stündlichen PV-Daten und einem mindestens
 # stündlichen Lastprofil, optional mit PV-Strom-Limitierung durch Wechselrichter
 #
-# Nutzung: Solar.pl <Lastprofil-Datei> <Solardaten-Datei> <Nennleistung in Wp>
-#            <Wirkungsgrad in %> <Jahresverbrauch in kW>
+# Nutzung: Solar.pl <Lastprofil-Datei> <Jahresverbrauch in kW>
+#            <PV-Daten-Datei> [<Nennleistung in Wp> [<Wirkungsgrad in %>]]
 #            [-en] [-tmy] [-lim <PV-Limitierung durch Wechselrichter in W>]
 #            [-hour <Datei>] [-day <Datei>] [-week <Datei>] [-month <Datei>]
 # Mit "-en" erfolgen die Textausgaben auf Englisch.
@@ -14,7 +14,7 @@
 # mit gegebenen Namen mit Statistik-Daten pro Stunde/Tag/Woche/Monat erzeugt.
 #
 # Beispiel:
-# Solar.pl Lastprofil.csv Solardaten_1215_kWh.csv 1000 88 3000 -lim 600 -tmy
+# Solar.pl Lastprofil.csv 3000 Solardaten_1215_kWh.csv 1000 88 -lim 600 -tmy
 #
 # Beziehe Solardaten für Standort von https://re.jrc.ec.europa.eu/pvg_tools/de/
 # Wähle den Standort und "DATEN PRO STUNDE", setze Häkchen bei "PV-Leistung".
@@ -27,8 +27,8 @@
 # profiles with a resolution of at least one hour, typically per minute.
 # Optionally takes into account cropping of PV input by solar inverter.
 #
-# Usage: Solar.pl <load profile file> <solar data file> <nominal power in Wp>
-#          <system efficiency in %> <consumption per year in kW>
+# Usage: Solar.pl <load profile file> <consumption per year in kW>
+#          <PV data file> [<nominal power in Wp> [<system efficiency in %>]]
 #          [-en] [-tmy] [-lim <PV input limit in W>]
 #          [-hour <file>] [-day <file>] [-week <file>] [-month <file>]
 # Use "-en" for text output in English.
@@ -38,7 +38,7 @@
 # with the given name containing with statistical data per hour/day/week/month.
 #
 # Example:
-# Solar.pl loadprofile.csv solardata_1215_kWh.csv 1000 88 3000 -lim 600 -tmy -en
+# Solar.pl loadprofile.csv 3000 solardata_1215_kWh.csv 1000 88 -lim 600 -tmy -en
 #
 # Take solar data from https://re.jrc.ec.europa.eu/pvg_tools/
 # Select location, click "HOURLY DATA", and set the check mark at "PV power".
@@ -53,10 +53,13 @@ use strict;
 use warnings;
 
 my $profile             = shift @ARGV; # load profile file
-my $PV_data             = shift @ARGV; # solar data file
-my $nominal_power       = shift @ARGV; # maximal PV output
-my $sys_efficiency      = shift @ARGV; # default by solar data file
 my $simulated_load      = shift @ARGV; # default by solar data file
+my $PV_data             = shift @ARGV; # solar data file
+my ($lat, $lon, $slope, $azimuth);     # read from $PV_data
+my $nominal_power       = shift @ARGV  # max PV output, default from $PV_data
+    if $ARGV[0] && $ARGV[0] =~ m/^[0-9]/;
+my $sys_efficiency      = shift @ARGV  # efficiency in %, default from $PV_data
+    if $ARGV[0] && $ARGV[0] =~ m/^[0-9]/;
 my ($en, $tmy, $PV_limit, $max, $hourly, $daily, $weekly,  $monthly);
 while ($#ARGV >= 0) {
     if      ($ARGV[0] eq "-en"                  ) { $en        = shift @ARGV;
@@ -103,6 +106,8 @@ use constant EVENING_START => 18; # start evening
 use constant EVENING_END   => 24; # end   evening
 use constant NIGHT_START   =>  0; # start night (basic load)
 use constant NIGHT_END     =>  6; # end   night (basic load)
+use constant WINTER_START  => 10; # start dark season
+use constant WINTER_END    => 04; # end   dark season
 
 use constant YearHours => 24 * 365;
 
@@ -110,7 +115,8 @@ my $sum_items = 0;
 my $items = 0; # number of load measure points in current hour
 my $load_max = 0;
 my $load_max_time;
-my ($load_sum, $bright_sum, $evening_sum, $night_sum) = (0, 0, 0, 0);
+my ($load_sum, $bright_sum, $evening_sum, $night_sum, $winter_sum) =
+    (0, 0, 0, 0, 0);
 
 my ($month, $day, $hour) = (1, 1, 0);
 sub adjust_day_month {
@@ -178,6 +184,7 @@ sub get_profile {
         $bright_sum  += $load if  BRIGHT_START <= $hour && $hour <  BRIGHT_END;
         $evening_sum += $load if EVENING_START <= $hour && $hour < EVENING_END;
         $night_sum   += $load if   NIGHT_START <= $hour && $hour <   NIGHT_END;
+        $winter_sum  += $load if WINTER_START <= $month || $month < WINTER_END;
 
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
@@ -195,14 +202,18 @@ my $p_txt = $en ? "load data points per hour  " : "Last-Datenpunkte pro Stunde";
 my $s_txt = $en ? "load portion  9 AM -  3 PM " : "Lastanteil  9 - 15 Uhr MEZ ";
 my $e_txt = $en ? "load portion  6 PM - 12 PM " : "Lastanteil 18 - 24 Uhr MEZ ";
 my $n_txt = $en ? "load portion 12 AM -  6 AM " : "Lastanteil  0 -  6 Uhr MEZ ";
+my $w_txt = $en ? "load portion October-March " : "Lastanteil Oktober - März  ";
 my $t_txt = $en ? "total load acc. to profile " : "Verbrauch gemäß Lastprofil ";
 my $b_txt = $en ? "basic load                 " : "Grundlast                  ";
 my $m_txt = $en ? "maximal load               " : "Maximallast                ";
 my $on    = $en ? "on" : "am";
+my $s10   = "          "; 
+print "".($en ? "load profile file" : "Lastprofil-Datei ")."$s10 : $profile\n";
 print "$p_txt = ".sprintf("%4d", $sum_items / $hour_per_year)."\n";
 print "$s_txt =   ".percent($bright_sum  / $load_sum)." %\n";
 print "$e_txt =   ".percent($evening_sum / $load_sum)." %\n";
 print "$n_txt =   ".percent($night_sum   / $load_sum)." %\n";
+print "$w_txt =   ".percent($winter_sum  / $load_sum)." %\n";
 print "$t_txt =".kWh($load_sum)."\n";
 print "$b_txt =".W($night_sum / 365 / (NIGHT_END - NIGHT_START))."\n";
 print "$m_txt =".W($load_max)." $on $load_max_time\n";
@@ -244,6 +255,10 @@ sub timeseries {
     my ($months, $hours) = (0, 0);
     while (<$IN>) {
         chomp;
+        $lat = $1 if (!$lat && m/^Latitude \(decimal degrees\):\s*([\d\.]+)/);
+        $lon = $1 if (!$lon && m/^Longitude \(decimal degrees\):\s*([\d\.]+)/);
+        $slope = $1 if (!$slope && m/^Slope:\s*(.+)$/);
+        $azimuth = $1 if (!$azimuth && m/^Azimuth:\s*(.+)$/);
         if (!$nominal_power_deflt && m/Nominal power.*? \(kWp\):\s*([\d\.]+)/) {
             $nominal_power_deflt = $1 * 1000;
             $nominal_power = $nominal_power_deflt unless $nominal_power;
@@ -256,7 +271,11 @@ sub timeseries {
         $power_provided = 1 if m/^time,P,/;
 
         next unless m/^20\d\d\d\d\d\d:\d\d\d\d,/;
-        die "Missing nominal power in $file" unless $nominal_power_deflt;
+        die "Missing latitude in $file"  unless $lat;
+        die "Missing longitude in $file" unless $lon;
+        die "Missing slope in $file"     unless $slope;
+        die "Missing azimuth in $file"   unless $azimuth;
+        die "Missing nominal power in $file"     unless $nominal_power_deflt;
         die "Missing system efficiency in $file" unless $sys_efficiency_deflt;
         die "Missing PV power output data in $file" unless $power_provided;
         next if m/^20\d\d0229:/; # skip data of Feb 29th (in leap year)
@@ -488,6 +507,7 @@ my $en2 = $en ? "  " : "";
 my $de1 = $en ? ""   : " ";
 my $de2 = $en ? ""   : "  ";
 my $de3 = $en ? ""   : "   ";
+my $s13 = "             ";
 my $with           = $en ? "with"                 : "bei";
 my $during         = $en ? "during"               : "während";
 my $lim            = $en ? "by cropping at"       : "durch Limitierung auf";
@@ -497,7 +517,16 @@ my $of_yield       = $en ? "of yield"             : "des Ertrags";
 my $of_consumption = $en ? "of consumption"       : "des Verbrauchs";
 my $PV_loss_txt    = $en ? "PV loss             " : "PV-Abregelungsverlust";
 $use_with_lim_txt  = "$use_with_lim_txt $en2         " unless $PV_limit;
+$slope   =~ s/ deg\./°/;
+$azimuth =~ s/ deg\./°/;
+$slope   =~ s/optimum/opt./;
+$azimuth =~ s/optimum/opt./;
 print "\n";
+print "".($en ? "PV data file  " : "PV-Daten-Datei")."$s13 : $PV_data\n";
+print "".($en ? "latitude      " : "Breitengrad   ")."$s13 =   $lat\n";
+print "".($en ? "longitude     " : "Längengrad    ")."$s13 =   $lon\n";
+print "".($en ? "slope         " : "Neigungswinkel")."$s13 =   $slope\n";
+print "".($en ? "azimuth       " : "Azimut        ")."$s13 =   $azimuth\n";
 print "$nominal_txt $en2         =" .W($nominal_power)."p\n";
 print "$max_gross_txt $en1        =".W($PV_gross_max)." $on $PV_gross_max_tm\n";
 print "$PV_gross_txt $en1            =".kWh($PV_gross_out_sum)."\n";

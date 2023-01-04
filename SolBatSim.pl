@@ -1,11 +1,11 @@
 #!/usr/bin/perl
 ################################################################################
 # Eigenverbrauchs-Simulation mit stündlichen PV-Daten und einem mindestens
-# stündlichen Lastprofil, optional mit PV-Strom-Limitierung durch Wechselrichter
+# stündlichen Lastprofil, optional mit Ausgangs-Limitierung des Wechselrichters
 #
 # Nutzung: Solar.pl <Lastprofil-Datei> <Jahresverbrauch in kW>
 #            <PV-Daten-Datei> [<Nennleistung in Wp> [<Wirkungsgrad in %>]]
-#            [-en] [-tmy] [-lim <PV-Limitierung durch Wechselrichter in W>]
+#            [-en] [-tmy] [-lim <Wechselrichter-Ausgangsleistungs-Limit in W>]
 #            [-hour <Datei>] [-day <Datei>] [-week <Datei>] [-month <Datei>]
 # Mit "-en" erfolgen die Textausgaben auf Englisch.
 # Wenn PV-Daten für mehrere Jahre gegeben sind, wird der Durchschnitt berechnet
@@ -25,11 +25,11 @@
 ################################################################################
 # Simulation of actual own usage of photovoltaic power output according to load
 # profiles with a resolution of at least one hour, typically per minute.
-# Optionally takes into account cropping of PV input by solar inverter.
+# Optionally takes into account power output cropping by solar inverter.
 #
 # Usage: Solar.pl <load profile file> <consumption per year in kW>
 #          <PV data file> [<nominal power in Wp> [<system efficiency in %>]]
-#          [-en] [-tmy] [-lim <PV input limit in W>]
+#          [-en] [-tmy] [-lim <inverter output power limit in W>]
 #          [-hour <file>] [-day <file>] [-week <file>] [-month <file>]
 # Use "-en" for text output in English.
 # When PV data for more than one year is given, the average is computed, while
@@ -89,7 +89,7 @@ sub date_string {
         " ".($en ? "at" : "um")." ".sprintf("%02d", shift);
 }
 sub time_string {
-    return date_string(shift, shift, shift).sprintf(":%02d", int(shift));
+    return date_string(shift, shift, shift).sprintf(":%02d h", int(shift));
 }
 sub index_string {
     return date_string(shift, shift, shift).sprintf("h, index %4d", shift);
@@ -311,11 +311,12 @@ sub timeseries {
         }
         $PV_gross_out[$month][$day][$hour] += $power;
         $PV_gross_out_sum += $power;
+        $power *= $sys_efficiency;
 
         $PV_net_loss[$month][$day][$hour] = 0;
         my $PV_loss = 0;
         if ($PV_limit && $power > $PV_limit) {
-            $PV_loss = ($power - $PV_limit) * $sys_efficiency;
+            $PV_loss = ($power - $PV_limit); # * $sys_efficiency;
             $PV_net_loss[$month][$day][$hour] += $PV_loss;
             $PV_net_loss_sum += $PV_loss;
             $PV_net_loss_hours++;
@@ -324,7 +325,7 @@ sub timeseries {
             #"\tPV=".round($power)."\tlimit=".round($PV_limit).
             #"\tloss=".round($PV_net_loss_sum)."\t$_\n";
         }
-        $power *= $sys_efficiency;
+        # $power *= $sys_efficiency;
         $PV_net_out[$month][$day][$hour] += $power;
         $PV_net_out_sum += $power;
         $PV_net_bright_sum += $power
@@ -397,8 +398,9 @@ my $own_consumpt_txt = $en ? "own consumption ratio": "Eigenverbrauchsanteil";
 my $load_cover_txt   = $en ? "load coverage ratio"  : "Eigendeckungsanteil";
 my $PV_gross_txt     = $en ? "PV gross yield"       : "PV-Bruttoertrag";
 my $PV_net_txt       = $en ? "PV net yield"         : "PV-Nettoertrag";
-my $PV_net_lim_txt   = $en ? "PV net cropped"       :"PV-Nettoertrag limitiert";
-my $PV_loss_lim_txt  = $en ? "PV loss by cropping"  : "PV-Abregelungsverlust";
+my $PV_net_lim_txt   = $en ? "inverter output cropped"
+    : "WR-Ausgangsleistung limitiert";
+my $PV_loss_lim_txt  = $en ? "output cropping loss"  : "WR-Abregelungsverlust";
 my $load_txt         = $en ? "load by household"    : "Last durch Haushalt";
 my $use_loss_txt     = $en ?"PV own consumption loss":"Eigenverbrauchsverlust";
 my $by_limit         = $en ? "by cropping"          : "durch Limit";

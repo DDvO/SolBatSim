@@ -58,6 +58,7 @@ use constant NIGHT_START   =>  0; # start night (basic load)
 use constant NIGHT_END     =>  6; # end   night (basic load)
 
 use constant HOUR_AVERAGE => 0;
+use constant MINUTE_AVERAGE => 1;
 use constant TIMEZONE_DELTA => +1; # for local timezone MEZ
 
 use constant Normierung => 0;
@@ -382,6 +383,8 @@ sub save_profile {
             }
         }
         $load = 0 if !HOUR_AVERAGE;
+        my ($minute_count, $minute_delta, $minute_last, $minute_load) =
+            (0, int($n / 60), $n - ($n % 60), 0)  if MINUTE_AVERAGE;
         for (my $item = 0; $item < $n; $item++) {
             # print index_string($month, $day, $hour, $item).",";
             # for (my $i = 0; $i < 74; $i++) {
@@ -396,7 +399,13 @@ sub save_profile {
                     ", load = ".sprintf("%4d", $point)."\n"
             };
 
-            if (!HOUR_AVERAGE) {
+            if (MINUTE_AVERAGE && $n >= 60) {
+                $minute_load += $point;
+                if (++$minute_count == $minute_delta && $item < $minute_last) {
+                    print $OUT "".round($minute_load / $minute_delta).",";
+                    ($minute_count, $minute_load) = (0, 0);
+                }
+            } elsif (!HOUR_AVERAGE) {
                 $point = round($point);
                 print $OUT "$point,";
             }

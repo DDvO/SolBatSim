@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ################################################################################
 # Eigenverbrauchs-Simulation mit stündlichen PV-Daten und einem mindestens
-# stündlichen Lastprofil, optional mit Ausgangs-Limitierung des Wechselrichters
+# stündlichen Lastprofil, optional mit Ausgangs-Drosselung des Wechselrichters
 # und optional mit Stromspeicher (Batterie o.ä.)
 #
 # Nutzung: Solar.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
@@ -11,7 +11,7 @@
 #            [-ceff <Lade-Wirkungsgrad in %, ansonsten 94]
 #            [-seff <Speicher-Wirkungsgrad in %, ansonsten 95]
 #            [-deff <Entlade-Wirkungsgrad in %, ansonsten 94]
-#            [-en] [-tmy] [-lim <Wechselrichter-Ausgangsleistungs-Limit in W>]
+#            [-en] [-tmy] [-curb <Wechselrichter-Ausgangsleistungs-Limit in W>]
 #            [-hour <Datei>] [-day <Datei>] [-week <Datei>] [-month <Datei>]
 # Mit "-en" erfolgen die Textausgaben auf Englisch.
 # Wenn PV-Daten für mehrere Jahre gegeben sind, wird der Durchschnitt berechnet
@@ -20,7 +20,7 @@
 # mit gegebenen Namen mit Statistik-Daten pro Stunde/Tag/Woche/Monat erzeugt.
 #
 # Beispiel:
-# Solar.pl Lastprofil.csv 3000 Solardaten_1215_kWh.csv 1000 -lim 600 -tmy
+# Solar.pl Lastprofil.csv 3000 Solardaten_1215_kWh.csv 1000 -curb 600 -tmy
 #
 # Beziehe Solardaten für Standort von https://re.jrc.ec.europa.eu/pvg_tools/de/
 # Wähle den Standort und "DATEN PRO STUNDE", setze Häkchen bei "PV-Leistung".
@@ -41,7 +41,7 @@
 #          [-ceff <charging efficiency in %, default 94]
 #          [-seff <storage efficiency in %, default 95]
 #          [-deff <discharging efficiency in %, default 94]
-#          [-en] [-tmy] [-lim <inverter output power limit in W>]
+#          [-en] [-tmy] [-curb <inverter output power limit in W>]
 #          [-hour <file>] [-day <file>] [-week <file>] [-month <file>]
 # Use "-en" for text output in English.
 # When PV data for more than one year is given, the average is computed, while
@@ -50,7 +50,7 @@
 # with the given name containing with statistical data per hour/day/week/month.
 #
 # Example:
-# Solar.pl loadprofile.csv 3000 solardata_1215_kWh.csv 1000 -lim 600 -tmy -en
+# Solar.pl loadprofile.csv 3000 solardata_1215_kWh.csv 1000 -curb 600 -tmy -en
 #
 # Take solar data from https://re.jrc.ec.europa.eu/pvg_tools/
 # Select location, click "HOURLY DATA", and set the check mark at "PV power".
@@ -86,7 +86,7 @@ while ($#ARGV >= 0 && $ARGV[0] =~ m/^\s*[^-]/) {
 die "Missing PV data file" if $#PV_files < 0;
 
 sub num_arg {
-    die "Missing number arg for -eff/-lim option"
+    die "Missing number argument for option"
         unless $ARGV[0] =~ m/^[\d\.]+$/;
     return shift @ARGV;
 }
@@ -94,15 +94,15 @@ sub str_arg {
     die "Missing arg for -max/-hour/-day/-week/-month option" if $#ARGV < 0;
     return shift @ARGV;
 }
-my ($en, $tmy, $PV_limit, $max, $hourly, $daily, $weekly,  $monthly);
+my ($en, $tmy, $curb, $max, $hourly, $daily, $weekly,  $monthly);
 while ($#ARGV >= 0) {
     if      ($ARGV[0] eq "-en"    && shift @ARGV) { $en       = 1;
     } elsif ($ARGV[0] eq "-eff"   && shift @ARGV) { $sys_efficiency =
                                                         num_arg() / 100;
     } elsif ($ARGV[0] eq "-tmy"   && shift @ARGV) { $tmy      = 1;
-    } elsif ($ARGV[0] eq "-lim"   && shift @ARGV) { $PV_limit = num_arg();
+    } elsif ($ARGV[0] eq "-curb"  && shift @ARGV) { $curb     = num_arg();
     } elsif ($ARGV[0] eq "-max"   && shift @ARGV) { $max      = str_arg();
-    } elsif ($ARGV[0] eq "-capacity"&&shift@ARGV) { $capacity = str_arg();
+    } elsif ($ARGV[0] eq "-capacity"&&shift@ARGV) { $capacity = num_arg();
     } elsif ($ARGV[0] eq "-ceff"  && shift @ARGV) { $charge_eff =
                                                         num_arg() / 100;
     } elsif ($ARGV[0] eq "-seff"  && shift @ARGV) { $storage_eff =
@@ -439,14 +439,14 @@ sub simulate()
 
         $PV_net_loss[$month][$day][$hour] = 0;
         my $PV_loss = 0;
-        if ($PV_limit && $power > $PV_limit) {
-            $PV_loss = ($power - $PV_limit); # * $sys_efficiency;
+        if ($curb && $power > $curb) {
+            $PV_loss = ($power - $curb); # * $sys_efficiency;
             $PV_net_loss[$month][$day][$hour] += $PV_loss;
             $PV_net_loss_sum += $PV_loss;
             $PV_net_loss_hours++;
-            $power = $PV_limit;
+            $power = $curb;
             # print "$year-".time_string($month, $day, $hour, $minute).
-            #"\tPV=".round($power)."\tlimit=".round($PV_limit).
+            #"\tPV=".round($power)."\tcurb=".round($curb).
             #"\tloss=".round($PV_net_loss_sum)."\t$_\n";
         }
         # $power *= $sys_efficiency;
@@ -573,7 +573,7 @@ simulate();
 
 my $nominal_txt      = $en ? "nominal PV power"     : "PV-Nominalleistung";
 my $max_gross_txt    = $en ? "max gross PV power"   : "Bruttoleistung max.";
-my $PV_limit_txt     = $en ? "cropping by inverter" : "Leistungsbegrenzung";
+my $curb_txt         = $en ? "power curb by inverter" : "Leistungsbegrenzung";
 my $system_eff_txt   = $en ? "system efficiency"    : "System-Wirkungsgrad";
 my $own_txt          = $en ? "own consumption "     : "Eigenverbrauch";
 my $own_ratio_txt    = $own_txt . ($en ? "ratio"    : "santeil");
@@ -581,15 +581,15 @@ my $own_storage_txt  = $en ? $own_txt."via storage":"$own_txt via Speicher";
 my $load_cover_txt   = $en ? "load coverage ratio"  : "Eigendeckungsanteil";
 my $PV_gross_txt     = $en ? "PV gross yield"       : "PV-Bruttoertrag";
 my $PV_net_txt       = $en ? "PV net yield"         : "PV-Nettoertrag";
-my $PV_net_lim_txt   = $en ? "inverter output cropped"
-    : "WR-Ausgangsleistung limitiert";
-my $PV_loss_lim_txt  = $en ? "output cropping loss" : "WR-Abregelungsverlust";
+my $PV_net_curb_txt  = $en ? "inverter output curbed"
+    : "WR-Ausgangsleistung gedrosselt";
+my $PV_loss_txt      = $en ? "PV yield lost"        : "PV-Ertragsverlust";
 my $load_txt         = $en ? "load by household"    : "Last durch Haushalt";
 my $use_loss_txt     = $en ? "PV $own_txt"."loss"   : $own_txt."sverlust";
-my $by_limit         = $en ? "by cropping"          : "durch Limit";
-my $use_wo_lim_txt   = $en ? "$own_txt"."w/o cropping" : "$own_txt ohne Limit";
-my $use_with_lim_txt = $en ? "own consumption".($PV_limit ? " w/ cropping" : "")
-                           : "Eigenverbrauch" .($PV_limit ? " mit Limit"   :"");
+my $by_curb          = $en ? "by curbing"           : "durch Drosselung";
+my $use_wo_curb_txt  = $en ? "$own_txt"."without curb": "$own_txt ohne Drossel";
+my $use_w_curb_txt   = $en ? "own consumption".($curb ? " with curb"   : "")
+                           : "Eigenverbrauch" .($curb ? " mit Drossel" : "");
 my $grid_feed_txt    = $en ? "grid feed-in"         : "Netzeinspeisung";
 my $each             = $en ? "each"   : "alle";
 my $yearly_txt       = $en ? "yearly" : "jährlich";
@@ -630,10 +630,10 @@ sub save_statistics {
     print $OU "".round($load_sum / 1000).
         ", $profile, ".join(", ", @PV_files)."\n";
     print $OU " $nominal_txt in Wp, $max_gross_txt in W, "
-        ."$PV_limit_txt in W, $system_eff_txt in %, "
+        ."$curb_txt in W, $system_eff_txt in %, "
         ."$own_ratio_txt in %, $load_cover_txt in %\n";
     print $OU "$nominal_sum, ".round($PV_gross_max).", "
-        .($PV_limit ? $PV_limit : "none").
+        .($curb ? $curb : "none").
         ", $sys_efficiency, $own_usage, $load_coverage\n";
     print $OU "$capacity_txt in Wh, $ceff_txt in %, $seff_txt in %, $deff_txt".
         "in %, $own_storage_txt in kWh, $stored_txt in kWh, $cycles_txt\n"
@@ -641,8 +641,8 @@ sub save_statistics {
     print $OU "$capacity, $charge_eff, $storage_eff, $discharge_eff, ".
         round($PV_used_via_storage / 1000).", ".
         round($charge_sum / 1000).", $cycles\n" if $capacity;
-    print $OU "$yearly_txt, $PV_gross_txt, $PV_net_txt, $PV_loss_lim_txt, ".
-        "$use_loss_txt $by_limit, $use_with_lim_txt, ".
+    print $OU "$yearly_txt, $PV_gross_txt, $PV_net_txt, $PV_loss_txt $by_curb, ".
+        "$use_loss_txt $by_curb, $use_w_curb_txt, ".
         "$grid_feed_txt, $each in kWh\n";
     print $OU "".($en ? "sums" : "Summen"  ).", ".
         round($PV_gross_out_sum  / 1000).", ".
@@ -651,8 +651,8 @@ sub save_statistics {
         round($PV_usage_loss_sum / 1000).", ".
         round($PV_used_sum       / 1000).", ".
         round($grid_feed_in      / 1000)."\n";
-    print $OU "$res_txt, $PV_gross_txt, $PV_net_txt, $PV_net_lim_txt, "
-        ."$load_txt, $use_wo_lim_txt, $use_with_lim_txt, $each in Wh\n";
+    print $OU "$res_txt, $PV_gross_txt, $PV_net_txt, $PV_net_curb_txt, "
+        ."$load_txt, $use_wo_curb_txt, $use_w_curb_txt, $each in Wh\n";
     ($month, my $week, my $days, $day, $hour) = (1, 1, 0, 1, 0);
     my ($gross, $PV_loss, $net, $load, $loss, $used) = (0, 0, 0, 0, 0, 0);
     while ($month <= 12) {
@@ -721,13 +721,13 @@ my $s13 = "             ";
 my $at             = $en ? "with"                 : "bei";
 my $with           = $en ? "with"                 : "mit";
 my $during         = $en ? "during"               : "während";
-my $lim            = $en ? "by cropping at"       : "durch Limitierung auf";
+my $by_curb_at     = $en ? "$by_curb at"          : "$by_curb auf";
 my $yield          = $en ? "yield portion"        : "Ertragsanteil";
 my $daytime        = $en ? "9 AM - 3 PM "         : "9-15 Uhr MEZ";
 my $of_yield       = $en ? "of net yield"         : "des Nettoertrags (Nutzungsgrad)";
 my $of_consumption = $en ? "of consumption"       : "des Verbrauchs (Autarkiegrad)";
-my $PV_loss_txt    = $en ? "PV loss             " : "PV-Abregelungsverlust";
-   $use_with_lim_txt  = "$use_with_lim_txt $en2         " unless $PV_limit;
+# PV-Abregelungsverlust"
+   $use_w_curb_txt  = "$use_w_curb_txt $en2         " unless $curb;
 my $nominal_sum = $#PV_peaks == 0 ? "" : " = $PV_peaks Wp";
 $lat = " $lat" unless $lat =~ m/^-?\d\d/;
 $lon = " $lon" unless $lon =~ m/^-?\d\d/;
@@ -739,15 +739,15 @@ print "$max_gross_txt $en1        =".W($PV_gross_max)." $on $PV_gross_max_tm\n";
 print "$PV_gross_txt $en1            =".kWh($PV_gross_out_sum)."\n";
 print "$PV_net_txt $en2             =" .kWh($PV_net_out_sum).
               " $at $system_eff_txt $sys_efficiency%\n";
-print "$PV_loss_txt $en1      ="       .kWh($PV_net_loss_sum)." $during "
-    .round($PV_net_loss_hours)." h $lim $PV_limit W\n" if $PV_limit;
+print "$PV_loss_txt $en2 $en2         ="       .kWh($PV_net_loss_sum).
+    " $during ".round($PV_net_loss_hours)." h $by_curb_at $curb W\n" if $curb;
 print "$yield $daytime  =   $yield_daytime %\n";
 
 print "\n";
 print "$load_txt $en2        =" .kWh($load_sum)."\n";
-print "$use_with_lim_txt $de3=" .kWh($PV_used_sum)."\n";
+print "$use_w_curb_txt  $en1=" .kWh($PV_used_sum)."\n";
 print "$use_loss_txt $de1    =" .kWh($PV_usage_loss_sum)." $during "
-    .round($PV_usage_loss_hours)." h $lim $PV_limit W\n" if $PV_limit;
+    .round($PV_usage_loss_hours)." h $by_curb_at $curb W\n" if $curb;
 print "$grid_feed_txt $en3            =" .kWh($grid_feed_in)."\n";
 print "$own_ratio_txt       =   $own_usage % $of_yield\n";
 print "$load_cover_txt         =   $load_coverage % $of_consumption\n";

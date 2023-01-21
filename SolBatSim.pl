@@ -8,6 +8,7 @@
 #            (<PV-Daten-Datei> [<Nennleistung in Wp>])+
 #            [-eff <System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei(en)>]
 #            [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>
+#            [-AC] (bedeutet AC-gekoppelte Ladung, nach Wechselrichtung)
 #            [-ceff <Lade-Wirkungsgrad in %, ansonsten 94]
 #            [-seff <Speicher-Wirkungsgrad in %, ansonsten 95]
 #            [-deff <Entlade-Wirkungsgrad in %, ansonsten 94]
@@ -38,6 +39,7 @@
 #          (<PV data file> [<nominal power in Wp>])+
 #          [-eff <system efficiency in %, default from PV data file(s)>]
 #          [-capacity <storage capacity in Wh, default 0 (no battery)>
+#          [-AC] (means AC-coupled charging, after inverter)
 #          [-ceff <charging efficiency in %, default 94]
 #          [-seff <storage efficiency in %, default 95]
 #          [-deff <discharging efficiency in %, default 94]
@@ -74,6 +76,7 @@ my @PV_peaks;       # nominal/maximal PV output(s), default from PV data file(s)
 my ($lat, $lon);    # from PV data file(s)
 my $sys_efficiency; # system efficiency, default from PV data file(s)
 my $capacity;            # usable storage capacity in Wh on average degradation
+my $AC_coupled    = 0;   # by default, charging is DC-coupled (w/o inverter)
 my $charge_eff    = .94; # charge efficiency
 my $storage_eff   = .95; # storage efficiency
 my $discharge_eff = .94; # discharge efficiency
@@ -104,6 +107,7 @@ while ($#ARGV >= 0) {
     } elsif ($ARGV[0] eq "-curb"  && shift @ARGV) { $curb     = num_arg();
     } elsif ($ARGV[0] eq "-max"   && shift @ARGV) { $max      = str_arg();
     } elsif ($ARGV[0] eq "-capacity"&&shift@ARGV) { $capacity = num_arg();
+    } elsif ($ARGV[0] eq "-AC"    && shift @ARGV) { $AC_coupled = 1;
     } elsif ($ARGV[0] eq "-ceff"  && shift @ARGV) { $charge_eff =
                                                         num_arg() / 100;
     } elsif ($ARGV[0] eq "-seff"  && shift @ARGV) { $storage_eff =
@@ -490,13 +494,15 @@ sub simulate()
                     my $max_to_charge = $capacity - $charge;
                     # optimal charge: exactly as much as currently unused
                     my $charge_delta = min($extra_power, $max_to_charge);
-                    $grid_feed_in -= $charge_delta;
-                    $charge_delta *= $charge_eff;
-                    $charge += $charge_delta;
-                    $charge_sum += $charge_delta;
                     $loss += min($PV_loss, $max_to_charge * $charge_eff
                                  * $storage_eff * $discharge_eff)
-                        if $PV_loss != 0;
+                        if $AC_coupled && $PV_loss != 0;
+                    $grid_feed_in -= $charge_delta;
+                    $charge_delta *= $charge_eff;
+                    # when charging is DC-coupled, no loss through inverter
+                    $charge_delta /= $sys_efficiency unless $AC_coupled;
+                    $charge += $charge_delta;
+                    $charge_sum += $charge_delta;
                 } elsif ($charge > 0 # storage no empty
                          && $power_needed > 0) {
                     # optimal discharge: exactly as much as currently needed

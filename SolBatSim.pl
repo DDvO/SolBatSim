@@ -77,6 +77,7 @@ my $capacity;            # usable storage capacity in Wh on average degradation
 my $charge_eff    = .94; # charge efficiency
 my $storage_eff   = .95; # storage efficiency
 my $discharge_eff = .94; # discharge efficiency
+# storage efficiency and discharge efficiency could have been combined
 my $nominal_power_sum = 0;
 
 while ($#ARGV >= 0 && $ARGV[0] =~ m/^\s*[^-]/) {
@@ -475,29 +476,31 @@ sub simulate()
             my $loss = 0;
             my $load = $load_by_item[$month][$day][$hour][$item];
             # $needed += $load;
-            my $power_diff = $net_power - $load;
+            my $power_diff = my $extra_power = $net_power - $load;
+            my $power_needed = -$power_diff;
             my $pv_used = $net_power; # will be PV own consumption
-            if ($power_diff > 0) {
+            if ($extra_power > 0) {
                 $pv_used = $load; # == min($net_power, $load);
-                $grid_feed_in += $power_diff if $capacity; # else calc'ed below
+                $grid_feed_in += $extra_power if $capacity; # else calc'ed below
             }
 
             if ($capacity) { # storage available
                 if ($capacity > $charge # storage not full
-                    && $net_power > $load) {
+                    && $extra_power > 0) {
+                    my $max_to_charge = $capacity - $charge;
                     # optimal charge: exactly as much as currently unused
-                    my $charge_delta = min($power_diff, $capacity - $charge);
+                    my $charge_delta = min($extra_power, $max_to_charge);
                     $grid_feed_in -= $charge_delta;
                     $charge_delta *= $charge_eff;
                     $charge += $charge_delta;
                     $charge_sum += $charge_delta;
-                    $loss += min(($capacity - $charge) * $charge_eff
-                                 * $storage_eff * $discharge_eff, $PV_loss)
+                    $loss += min($PV_loss, $max_to_charge * $charge_eff
+                                 * $storage_eff * $discharge_eff)
                         if $PV_loss != 0;
                 } elsif ($charge > 0 # storage no empty
-                         && $load > $net_power) {
+                         && $power_needed > 0) {
                     # optimal discharge: exactly as much as currently needed
-                    my $discharge = min($load - $net_power, $charge);
+                    my $discharge = min($power_needed, $charge);
                     $charge -= $discharge;
                     $discharge *= $storage_eff * $discharge_eff;
                     $pv_used += $discharge;
@@ -508,8 +511,8 @@ sub simulate()
             $PV_used_by_item[$month][$day][$hour][$item] =
                 round($pv_used * $load_scale) if $max;
 
-            if ($PV_loss != 0 && $load > $net_power) {
-                $loss += min($load - $net_power, $PV_loss);
+            if ($PV_loss != 0 && $power_needed > 0) {
+                $loss += min($PV_loss, $power_needed);
             }
             if ($loss != 0) {
                 $losses += $loss;

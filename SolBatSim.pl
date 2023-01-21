@@ -521,8 +521,9 @@ sub simulate()
                 $PV_usage_loss_by_item[$month][$day][$hour][$item] = 0;
             }
         }
-        $PV_usage_loss[$month][$day][$hour] += $losses * $load_scale / $items;
-        $PV_usage_loss_sum += $losses / $items;
+        $losses *= $load_scale / $items;
+        $PV_usage_loss[$month][$day][$hour] += $losses;
+        $PV_usage_loss_sum += $losses;
         # $sum_needed += $needed * $load_scale / $items; # per hour
         # print "$year-".time_string($month, $day, $hour, $minute).
         # "\tPV=".round($power)."\tPN=".round($needed)."\tPU=".round($usages).

@@ -566,6 +566,7 @@ sub simulate()
     # die "Inconsistent load calculation: sum = $sum vs. needed = $sum_needed"
     #     if round($sum) != round($sum_needed);
     if ($capacity) {
+        $PV_used_via_storage *= $load_scale / $years;
         $grid_feed_in *= $load_scale / $years;
     } else {
         $grid_feed_in = $PV_net_out_sum - $PV_used_sum;

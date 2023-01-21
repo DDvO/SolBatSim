@@ -204,36 +204,36 @@ sub get_profile {
         }
         $items = $n if $items >= 0;
         $sum_items += ($items_by_hour[$month][$day][$hour] = $n);
-        my $load = 0;
+        my $hload = 0;
         for (my $item = 0; $item < $n; $item++) {
-            my $point = $sources[$item];
-            die "Error parsing load item: '$point' in $file line $."
-                unless $point =~ m/^\s*-?[\.\d]+\s*$/;
-            if ($point > $load_max) {
-                $load_max = $point;
+            my $load = $sources[$item];
+            die "Error parsing load item: '$load' in $file line $."
+                unless $load =~ m/^\s*-?[\.\d]+\s*$/;
+            if ($load > $load_max) {
+                $load_max = $load;
                 $load_max_time =
                     time_string($month, $day, $hour, 60 * $item / $n);
             }
-            $load += $point;
-            $load_by_item[$month][$day][$hour][$item] = $point;
-            if ($point <= 0) {
+            $hload += $load;
+            $load_by_item[$month][$day][$hour][$item] = $load;
+            if ($load <= 0) {
                 print "Load on YYYY-".index_string($month, $day, $hour, $item).
-                    " = ".sprintf("%4d", $point)."\n"
+                    " = ".sprintf("%4d", $load)."\n"
                     unless $warned_just_before;
                 $warned_just_before = 1;
             } else {
                 $warned_just_before = 0;
             }
         }
-        $load /= $n;
-        $load_by_hour[$month][$day][$hour] += $load;
-        $load_sum    += $load;
-        $night_sum   += $load if   NIGHT_START <= $hour && $hour <   NIGHT_END;
-        $morning_sum += $load if MORNING_START <= $hour && $hour < MORNING_END;
-        $bright_sum  += $load if  BRIGHT_START <= $hour && $hour <  BRIGHT_END;
-        $earleve_sum += $load if LAFTERN_START <= $hour && $hour < LAFTERN_END;
-        $evening_sum += $load if EVENING_START <= $hour && $hour < EVENING_END;
-        $winter_sum  += $load if WINTER_START <= $month || $month < WINTER_END;
+        $hload /= $n;
+        $load_by_hour[$month][$day][$hour] += $hload;
+        $load_sum    += $hload;
+        $night_sum   += $hload if   NIGHT_START <= $hour && $hour <   NIGHT_END;
+        $morning_sum += $hload if MORNING_START <= $hour && $hour < MORNING_END;
+        $bright_sum  += $hload if  BRIGHT_START <= $hour && $hour <  BRIGHT_END;
+        $earleve_sum += $hload if LAFTERN_START <= $hour && $hour < LAFTERN_END;
+        $evening_sum += $hload if EVENING_START <= $hour && $hour < EVENING_END;
+        $winter_sum  += $hload if WINTER_START <= $month || $month < WINTER_END;
 
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
@@ -474,18 +474,18 @@ sub simulate()
 
         for (my $item = 0; $item < $items; $item++) {
             my $loss = 0;
-            my $point = $load_by_item[$month][$day][$hour][$item];
-            # $needed += $point;
-            my $power_diff = $effective_PV_power - $point;
+            my $load = $load_by_item[$month][$day][$hour][$item];
+            # $needed += $load;
+            my $power_diff = $effective_PV_power - $load;
             my $pv_used = $effective_PV_power; # will be PV own consumption
             if ($power_diff > 0) {
-                $pv_used = $point; # == min($effective_PV_power, $point);
+                $pv_used = $load; # == min($effective_PV_power, $load);
                 $grid_feed_in += $power_diff if $capacity;
             }
 
             if ($capacity) { # storage available
                 if ($capacity > $charge # storage not full
-                    && $effective_PV_power > $point) {
+                    && $effective_PV_power > $load) {
                     # optimal charge: exactly as much as currently unused
                     my $charge_delta = min($power_diff, $capacity - $charge);
                     $grid_feed_in -= $charge_delta;
@@ -496,9 +496,9 @@ sub simulate()
                                  * $storage_eff * $discharge_eff, $PV_loss)
                         if $PV_loss != 0;
                 } elsif ($charge > 0 # storage no empty
-                         && $point > $effective_PV_power) {
+                         && $load > $effective_PV_power) {
                     # optimal discharge: exactly as much as currently needed
-                    my $discharge = min($point - $effective_PV_power, $charge);
+                    my $discharge = min($load - $effective_PV_power, $charge);
                     $charge -= $discharge;
                     $discharge *= $storage_eff * $discharge_eff;
                     $pv_used += $discharge;
@@ -509,8 +509,8 @@ sub simulate()
             $PV_used_by_item[$month][$day][$hour][$item] =
                 round($pv_used * $load_scale) if $max;
 
-            if ($PV_loss != 0 && $point > $effective_PV_power) {
-                $loss += min($point - $effective_PV_power, $PV_loss);
+            if ($PV_loss != 0 && $load > $effective_PV_power) {
+                $loss += min($load - $effective_PV_power, $PV_loss);
             }
             if ($loss != 0) {
                 $losses += $loss;
@@ -654,7 +654,7 @@ sub save_statistics {
     print $OU "$res_txt, $PV_gross_txt, $PV_net_txt, $PV_net_curb_txt, "
         ."$load_txt, $use_wo_curb_txt, $use_w_curb_txt, $each in Wh\n";
     ($month, my $week, my $days, $day, $hour) = (1, 1, 0, 1, 0);
-    my ($gross, $PV_loss, $net, $load, $loss, $used) = (0, 0, 0, 0, 0, 0);
+    my ($gross, $PV_loss, $net, $hload, $loss, $used) = (0, 0, 0, 0, 0, 0);
     while ($month <= 12) {
         my $tim;
         if ($weekly) {
@@ -671,7 +671,7 @@ sub save_statistics {
         $gross   += round($gross_across / $years);
         $PV_loss += round($PV_net_loss  [$month][$day][$hour] / $years);
         $net     += round($PV_net_out   [$month][$day][$hour] / $years);
-        $load    += round($load_by_hour [$month][$day][$hour] * $load_scale);
+        $hload    += round($load_by_hour [$month][$day][$hour] * $load_scale);
         $loss    += round($PV_usage_loss[$month][$day][$hour] / $years);
         $used    += round($PV_used      [$month][$day][$hour] / $years);
         my ($m, $d, $h) = ($month, $day, $hour);
@@ -691,15 +691,14 @@ sub save_statistics {
                     $minute .= sprintf(":%02d", int((60 * $i % $items)
                                                     / $items * 60))
                         unless (60 % $items == 0);
-                    $load =    round($load_by_item[$m][$d][$h][$i]
-                                     * $load_scale);
+                    $hload = round($load_by_item[$m][$d][$h][$i] * $load_scale);
                     $loss = $PV_usage_loss_by_item[$m][$d][$h][$i];
                     $used = $PV_used_by_item      [$m][$d][$h][$i];
                 }
                 print $OU "$tim$minute, $gross, ".($net + $PV_loss).
-                      ", $net, $load, ".($used + $loss).", $used\n";
+                      ", $net, $hload, ".($used + $loss).", $used\n";
             }
-            ($gross, $PV_loss, $net, $load, $loss, $used) = (0, 0, 0, 0, 0, 0);
+            ($gross, $PV_loss, $net, $hload, $loss, $used) = (0, 0, 0, 0, 0, 0);
         }
     }
     close $OU;

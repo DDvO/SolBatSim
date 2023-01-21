@@ -435,28 +435,27 @@ sub simulate()
             $PV_gross_max_tm = ($tmy ? "TMY" : $start_year + $year)."-".
                 time_string($month, $day, $hour, $minute);
         }
-        $power *= $sys_efficiency;
+        my $net_power = $power * $sys_efficiency;
 
         $PV_net_loss[$month][$day][$hour] = 0;
         my $PV_loss = 0;
-        if ($curb && $power > $curb) {
-            $PV_loss = ($power - $curb); # * $sys_efficiency;
+        if ($curb && $net_power > $curb) {
+            $PV_loss = $net_power - $curb;
             $PV_net_loss[$month][$day][$hour] += $PV_loss;
             $PV_net_loss_sum += $PV_loss;
             $PV_net_loss_hours++;
-            $power = $curb;
+            $net_power = $curb;
             # print "$year-".time_string($month, $day, $hour, $minute).
-            #"\tPV=".round($power)."\tcurb=".round($curb).
+            #"\tPV=".round($net_power)."\tcurb=".round($curb).
             #"\tloss=".round($PV_net_loss_sum)."\t$_\n";
         }
-        # $power *= $sys_efficiency;
-        $PV_net_out[$month][$day][$hour] += $power;
-        $PV_net_out_sum += $power;
-        $PV_net_bright_sum += $power
+        $PV_net_out[$month][$day][$hour] += $net_power;
+        $PV_net_out_sum += $net_power;
+        $PV_net_bright_sum += $net_power
             if BRIGHT_START <= $hour && $hour < BRIGHT_END;
 
         # factor out $load_scale for optimizing the inner loop
-        my $effective_PV_power = $power / ($load_scale != 0 ? $load_scale : 1);
+        $net_power /= ($load_scale != 0 ? $load_scale : 1);
         $PV_loss /= $load_scale if $load_scale != 0;
         # my $needed = 0;
         my $usages = 0;
@@ -476,16 +475,16 @@ sub simulate()
             my $loss = 0;
             my $load = $load_by_item[$month][$day][$hour][$item];
             # $needed += $load;
-            my $power_diff = $effective_PV_power - $load;
-            my $pv_used = $effective_PV_power; # will be PV own consumption
+            my $power_diff = $net_power - $load;
+            my $pv_used = $net_power; # will be PV own consumption
             if ($power_diff > 0) {
-                $pv_used = $load; # == min($effective_PV_power, $load);
-                $grid_feed_in += $power_diff if $capacity;
+                $pv_used = $load; # == min($net_power, $load);
+                $grid_feed_in += $power_diff if $capacity; # else calc'ed below
             }
 
             if ($capacity) { # storage available
                 if ($capacity > $charge # storage not full
-                    && $effective_PV_power > $load) {
+                    && $net_power > $load) {
                     # optimal charge: exactly as much as currently unused
                     my $charge_delta = min($power_diff, $capacity - $charge);
                     $grid_feed_in -= $charge_delta;
@@ -496,9 +495,9 @@ sub simulate()
                                  * $storage_eff * $discharge_eff, $PV_loss)
                         if $PV_loss != 0;
                 } elsif ($charge > 0 # storage no empty
-                         && $load > $effective_PV_power) {
+                         && $load > $net_power) {
                     # optimal discharge: exactly as much as currently needed
-                    my $discharge = min($load - $effective_PV_power, $charge);
+                    my $discharge = min($load - $net_power, $charge);
                     $charge -= $discharge;
                     $discharge *= $storage_eff * $discharge_eff;
                     $pv_used += $discharge;
@@ -509,8 +508,8 @@ sub simulate()
             $PV_used_by_item[$month][$day][$hour][$item] =
                 round($pv_used * $load_scale) if $max;
 
-            if ($PV_loss != 0 && $load > $effective_PV_power) {
-                $loss += min($load - $effective_PV_power, $PV_loss);
+            if ($PV_loss != 0 && $load > $net_power) {
+                $loss += min($load - $net_power, $PV_loss);
             }
             if ($loss != 0) {
                 $losses += $loss;
@@ -526,8 +525,8 @@ sub simulate()
         $PV_usage_loss_sum += $losses;
         # $sum_needed += $needed * $load_scale / $items; # per hour
         # print "$year-".time_string($month, $day, $hour, $minute).
-        # "\tPV=".round($power)."\tPN=".round($needed)."\tPU=".round($usages).
-        # "\t$_\n" if $power != 0 && m/^20160214:1010/; # m/^20....02:12/;
+        # "\tPV=".round($net_power)."\tPN=".round($needed)."\tPU=".round($usages).
+        # "\t$_\n" if $net_power != 0 && m/^20160214:1010/; # m/^20....02:12/;
         $usages *= $load_scale / $items;
         $PV_used[$month][$day][$hour] += $usages;
         $PV_used_sum += $usages;

@@ -6,12 +6,12 @@
 #
 # Nutzung: Solar.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
 #            (<PV-Daten-Datei> [<Nennleistung in Wp>])+
-#            [-eff <System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei(en)>]
+#            [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
 #            [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>
-#            [-AC] (bedeutet AC-gekoppelte Ladung, nach Wechselrichtung)
+#            [-ac] (bedeutet AC-gekoppelte Ladung, nach Wechselrichtung)
 #            [-ceff <Lade-Wirkungsgrad in %, ansonsten 94]
 #            [-seff <Speicher-Wirkungsgrad in %, ansonsten 95]
-#            [-deff <Entlade-Wirkungsgrad in %, ansonsten 94]
+#            [-ieff <Wechselrichter-Wirkungsgrad in %, ansonsten 94]
 #            [-en] [-tmy] [-curb <Wechselrichter-Ausgangsleistungs-Limit in W>]
 #            [-hour <Datei>] [-day <Datei>] [-week <Datei>] [-month <Datei>]
 # Mit "-en" erfolgen die Textausgaben auf Englisch.
@@ -37,12 +37,12 @@
 #
 # Usage: Solar.pl <load profile file> [<consumption per year in kWh>]
 #          (<PV data file> [<nominal power in Wp>])+
-#          [-eff <system efficiency in %, default from PV data file(s)>]
+#          [-peff <PV system efficiency in %, default from PV data file(s)>]
 #          [-capacity <storage capacity in Wh, default 0 (no battery)>
-#          [-AC] (means AC-coupled charging, after inverter)
+#          [-ac] (means AC-coupled charging, after inverter)
 #          [-ceff <charging efficiency in %, default 94]
 #          [-seff <storage efficiency in %, default 95]
-#          [-deff <discharging efficiency in %, default 94]
+#          [-ieff <inverter efficiency in %, default 94]
 #          [-en] [-tmy] [-curb <inverter output power limit in W>]
 #          [-hour <file>] [-day <file>] [-week <file>] [-month <file>]
 # Use "-en" for text output in English.
@@ -74,12 +74,12 @@ my $simulated_load      = shift @ARGV # default by solar data file
 my @PV_files;
 my @PV_peaks;       # nominal/maximal PV output(s), default from PV data file(s)
 my ($lat, $lon);    # from PV data file(s)
-my $sys_efficiency; # system efficiency, default from PV data file(s)
+my $pvsys_eff;      # PV system efficiency, default from PV data file(s)
+my $inverter_eff  = .94; # inverter efficiency
 my $capacity;            # usable storage capacity in Wh on average degradation
 my $AC_coupled    = 0;   # by default, charging is DC-coupled (w/o inverter)
 my $charge_eff    = .94; # charge efficiency
 my $storage_eff   = .95; # storage efficiency
-my $discharge_eff = .94; # discharge efficiency
 # storage efficiency and discharge efficiency could have been combined
 my $nominal_power_sum = 0;
 
@@ -89,35 +89,44 @@ while ($#ARGV >= 0 && $ARGV[0] =~ m/^\s*[^-]/) {
 }
 die "Missing PV data file" if $#PV_files < 0;
 
+sub no_arg {
+    shift @ARGV;
+    return 1;
+}
 sub num_arg {
-    die "Missing number argument for option"
-        unless $ARGV[0] =~ m/^[\d\.]+$/;
+    die "Missing number argument for $ARGV[0] option"
+        unless $#ARGV >= 1 && $ARGV[1] =~ m/^[-\d\.]+$/;
+    shift @ARGV;
     return shift @ARGV;
 }
+sub eff_arg {
+    my $opt = $ARGV[0];
+    my $eff = num_arg();
+    die "Percentage argument for $opt option is out of range 0..100"
+        unless 0 <= $eff && $eff <= 100;
+    return $eff / 100;
+}
 sub str_arg {
-    die "Missing arg for -max/-hour/-day/-week/-month option" if $#ARGV < 0;
+    die "Missing arg for $ARGV[0] option" if $#ARGV < 1;
+    shift @ARGV;
     return shift @ARGV;
 }
 my ($en, $tmy, $curb, $max, $hourly, $daily, $weekly,  $monthly);
 while ($#ARGV >= 0) {
-    if      ($ARGV[0] eq "-en"    && shift @ARGV) { $en       = 1;
-    } elsif ($ARGV[0] eq "-eff"   && shift @ARGV) { $sys_efficiency =
-                                                        num_arg() / 100;
-    } elsif ($ARGV[0] eq "-tmy"   && shift @ARGV) { $tmy      = 1;
-    } elsif ($ARGV[0] eq "-curb"  && shift @ARGV) { $curb     = num_arg();
-    } elsif ($ARGV[0] eq "-max"   && shift @ARGV) { $max      = str_arg();
-    } elsif ($ARGV[0] eq "-capacity"&&shift@ARGV) { $capacity = num_arg();
-    } elsif ($ARGV[0] eq "-AC"    && shift @ARGV) { $AC_coupled = 1;
-    } elsif ($ARGV[0] eq "-ceff"  && shift @ARGV) { $charge_eff =
-                                                        num_arg() / 100;
-    } elsif ($ARGV[0] eq "-seff"  && shift @ARGV) { $storage_eff =
-                                                        num_arg() / 100;
-    } elsif ($ARGV[0] eq "-deff"  && shift @ARGV) { $discharge_eff =
-                                                        num_arg() / 100;
-    } elsif ($ARGV[0] eq "-hour"  && shift @ARGV) { $hourly   = str_arg();
-    } elsif ($ARGV[0] eq "-day"   && shift @ARGV) { $daily    = str_arg();
-    } elsif ($ARGV[0] eq "-week"  && shift @ARGV) { $weekly   = str_arg();
-    } elsif ($ARGV[0] eq "-month" && shift @ARGV) { $monthly  = str_arg();
+    if      ($ARGV[0] eq "-en"      ) { $en           =  no_arg();
+    } elsif ($ARGV[0] eq "-peff"    ) { $pvsys_eff    = eff_arg();
+    } elsif ($ARGV[0] eq "-tmy"     ) { $tmy          =  no_arg();
+    } elsif ($ARGV[0] eq "-curb"    ) { $curb         = num_arg();
+    } elsif ($ARGV[0] eq "-max"     ) { $max          = str_arg();
+    } elsif ($ARGV[0] eq "-capacity") { $capacity     = num_arg();
+    } elsif ($ARGV[0] eq "-ac"      ) { $AC_coupled   =  no_arg();
+    } elsif ($ARGV[0] eq "-ceff"    ) { $charge_eff   = eff_arg();
+    } elsif ($ARGV[0] eq "-seff"    ) { $storage_eff  = eff_arg();
+    } elsif ($ARGV[0] eq "-ieff"    ) { $inverter_eff = eff_arg();
+    } elsif ($ARGV[0] eq "-hour"    ) { $hourly       = str_arg();
+    } elsif ($ARGV[0] eq "-day"     ) { $daily        = str_arg();
+    } elsif ($ARGV[0] eq "-week"    ) { $weekly       = str_arg();
+    } elsif ($ARGV[0] eq "-month"   ) { $monthly      = str_arg();
     } else { die "Invalid option: $ARGV[0]";
     }
 }
@@ -293,12 +302,14 @@ my ($start_year, $years);
 sub get_power {
     my ($file, $nominal_power) = (shift, shift);
     open(my $IN, '<', $file) or die "Could not open PV data file $file: $!\n";
+    my $s13 = "             ";
+    print "".($en ? "PV data file  " : "PV-Daten-Datei")."$s13 : $file";
 
     # my $sum_needed = 0;
     my ($slope, $azimuth);
     my $current_years = 0;
     my $nominal_power_deflt; # PVGIS default: 1 kWp
-    my $sys_efficiency_deflt; # PVGIS default: 0.86
+    my $pvsys_eff_deflt; # PVGIS default: 0.86
     my $power_rate;
     my $power_provided = 0; # PVGIS default: none
     my ($months, $hours) = (0, 0);
@@ -319,13 +330,20 @@ sub get_power {
             $nominal_power = $nominal_power_deflt unless $nominal_power;
             $nominal_power_sum += $nominal_power;
         }
-        if (!$sys_efficiency_deflt && m/System losses \(%\):\s*([\d\.]+)/) {
-            $sys_efficiency_deflt = 1 - $1/100;
-            print "Ignoring efficiency $sys_efficiency_deflt provided by PVGIS\n"
-                if 0 && $sys_efficiency
-                && $sys_efficiency != $sys_efficiency_deflt;
-            $sys_efficiency = $sys_efficiency_deflt
-                unless defined $sys_efficiency;
+        if (!$pvsys_eff_deflt && m/System losses \(%\):\s*([\d\.]+)/) {
+            my $seff = 1 - $1/100;
+            my $eff = percent($seff);
+            $pvsys_eff_deflt = $seff / ($inverter_eff != 0 ? $inverter_eff : 1);
+            print ", ".($en ?
+                        "contained system efficiency $eff% was overridden" :
+                        "enthaltene System-Effizienz $eff% wurde übersteuert")
+                if $pvsys_eff && $pvsys_eff != $pvsys_eff_deflt;
+            $pvsys_eff = $pvsys_eff_deflt unless defined $pvsys_eff;
+            if ($pvsys_eff > 1) {
+                print "\n";
+                die "unreasonable PV system efficiency ".round($pvsys_eff * 100)
+                    ."% - have -peff and -ieff been used properly?";
+            }
         }
         $power_provided = 1 if m/^time,P,/;
 
@@ -335,7 +353,7 @@ sub get_power {
         die "Missing slope in $file"     unless $slope;
         die "Missing azimuth in $file"   unless $azimuth;
         die "Missing nominal power in $file"     unless $nominal_power_deflt;
-        die "Missing system efficiency in $file" unless $sys_efficiency_deflt;
+        die "Missing system efficiency in $file" unless $pvsys_eff_deflt;
         die "Missing PV power output data in $file" unless $power_provided;
         next if m/^20\d\d0229:/; # skip data of Feb 29th (in leap year)
 
@@ -364,7 +382,7 @@ sub get_power {
             unless m/^(\d\d\d\d)(\d\d)(\d\d):(\d\d)(\d\d),([\d\.]+)/;
         my ($year, $month, $day, $hour, $minute_unused, $power) =
             ($tmy ? $start_year : $1, $2, $3, $4, $5, $6 * $nominal_power
-             / $nominal_power_deflt / $sys_efficiency_deflt);
+             / $nominal_power_deflt / ($pvsys_eff_deflt * $inverter_eff));
         $PV_gross_out[$year - $start_year][$month][$day][$hour] += $power;
         $hours++;
     }
@@ -382,9 +400,7 @@ sub get_power {
     $azimuth =~ s/ deg\./°/;
     $slope   =~ s/optimum/opt./;
     $azimuth =~ s/optimum/opt./;
-    my $s13 = "             ";
-    print "".($en ? "PV data file  " : "PV-Daten-Datei")."$s13 : $file\n";
-    print "".($en ? "slope         " : "Neigungswinkel")."$s13 =  $slope\n";
+    print "\n".($en ? "slope         " : "Neigungswinkel")."$s13 =  $slope\n";
     print "".($en ? "azimuth       " : "Azimut        ")."$s13 =  $azimuth\n";
     return $nominal_power;
 }
@@ -440,7 +456,7 @@ sub simulate()
             $PV_gross_max_tm = ($tmy ? "TMY" : $start_year + $year)."-".
                 time_string($month, $day, $hour, $minute);
         }
-        my $net_power = $power * $sys_efficiency;
+        my $net_power = $power * $pvsys_eff * $inverter_eff;
 
         $PV_net_loss[$month][$day][$hour] = 0;
         my $PV_loss = 0;
@@ -495,12 +511,13 @@ sub simulate()
                     # optimal charge: exactly as much as currently unused
                     my $charge_delta = min($extra_power, $max_to_charge);
                     $loss += min($PV_loss, $max_to_charge * $charge_eff
-                                 * $storage_eff * $discharge_eff)
+                                 * $storage_eff * $inverter_eff)
                         if $AC_coupled && $PV_loss != 0;
                     $grid_feed_in -= $charge_delta;
                     $charge_delta *= $charge_eff;
                     # when charging is DC-coupled, no loss through inverter
-                    $charge_delta /= $sys_efficiency unless $AC_coupled;
+                    $charge_delta /= ($inverter_eff != 0 ? $inverter_eff : 1)
+                        unless $AC_coupled;
                     $charge += $charge_delta;
                     $charge_sum += $charge_delta;
                 } elsif ($charge > 0 # storage no empty
@@ -508,7 +525,7 @@ sub simulate()
                     # optimal discharge: exactly as much as currently needed
                     my $discharge = min($power_needed, $charge);
                     $charge -= $discharge;
-                    $discharge *= $storage_eff * $discharge_eff;
+                    $discharge *= $storage_eff * $inverter_eff;
                     $pv_used += $discharge;
                     $PV_used_via_storage += $discharge;
                 }
@@ -584,7 +601,7 @@ simulate();
 my $nominal_txt      = $en ? "nominal PV power"     : "PV-Nominalleistung";
 my $max_gross_txt    = $en ? "max gross PV power"   : "Bruttoleistung max.";
 my $curb_txt         = $en ? "power curb by inverter" : "Leistungsbegrenzung";
-my $system_eff_txt   = $en ? "system efficiency"    : "System-Wirkungsgrad";
+my $system_eff_txt   = $en ? "PV system efficiency" : "PV-System-Wirkungsgrad";
 my $own_txt          = $en ? "own consumption "     : "Eigenverbrauch";
 my $own_ratio_txt    = $own_txt . ($en ? "ratio"    : "santeil");
 my $own_storage_txt  = $en ? $own_txt."via storage":"$own_txt via Speicher";
@@ -606,7 +623,7 @@ my $yearly_txt       = $en ? "yearly" : "jährlich";
 my $capacity_txt     = $en ? "storage capacity"     : "Speicherkapazität";
 my $ceff_txt         = $en ? "charging efficiency"  : "Lade-Wirkungsgrad";
 my $seff_txt         = $en ? "storage efficiency" : "Speicher-Wirkungsgrad";
-my $deff_txt         = $en ? "discharging efficiency" : "Entlade-Wirkungsgrad";
+my $ieff_txt         = $en ?"inverter efficiency":"Wechselrichter-Wirkungsgrad";
 my $stored_txt       = $en ? "buffered energy"      : "Zwischenspeicherung";
 my $cycles_txt       = $en ? "full cycles per year" : "Vollzyklen pro Jahr";
 
@@ -618,10 +635,10 @@ my $yield_daytime =
     percent($PV_net_out_sum ? $PV_net_bright_sum / $PV_net_out_sum : 0);
 my $cycles = round($charge_sum / $capacity) if $capacity;
 
-$sys_efficiency *= 100;
+$pvsys_eff = round($pvsys_eff * 100);
 $charge_eff *= 100;
 $storage_eff *= 100;
-$discharge_eff *= 100;
+$inverter_eff *= 100;
 
 sub save_statistics {
     my $file = shift;
@@ -640,15 +657,15 @@ sub save_statistics {
     print $OU "".round($load_sum / 1000).
         ", $profile, ".join(", ", @PV_files)."\n";
     print $OU " $nominal_txt in Wp, $max_gross_txt in W, "
-        ."$curb_txt in W, $system_eff_txt in %, "
+        ."$curb_txt in W, $system_eff_txt in %, $ieff_txt in %, "
         ."$own_ratio_txt in %, $load_cover_txt in %\n";
     print $OU "$nominal_sum, ".round($PV_gross_max).", "
         .($curb ? $curb : "none").
-        ", $sys_efficiency, $own_usage, $load_coverage\n";
-    print $OU "$capacity_txt in Wh, $ceff_txt in %, $seff_txt in %, $deff_txt".
-        "in %, $own_storage_txt in kWh, $stored_txt in kWh, $cycles_txt\n"
+        ", $pvsys_eff, $inverter_eff, $own_usage, $load_coverage\n";
+    print $OU "$capacity_txt in Wh, $ceff_txt in %, $seff_txt in %, ".
+        "$own_storage_txt in kWh, $stored_txt in kWh, $cycles_txt\n"
         if $capacity;
-    print $OU "$capacity, $charge_eff, $storage_eff, $discharge_eff, ".
+    print $OU "$capacity, $charge_eff, $storage_eff, ".
         round($PV_used_via_storage / 1000).", ".
         round($charge_sum / 1000).", $cycles\n" if $capacity;
     print $OU "$yearly_txt, $PV_gross_txt, $PV_net_txt, $PV_loss_txt $by_curb, ".
@@ -736,7 +753,7 @@ my $daytime        = $en ? "9 AM - 3 PM "         : "9-15 Uhr MEZ";
 my $of_yield       = $en ? "of net yield"         : "des Nettoertrags (Nutzungsgrad)";
 my $of_consumption = $en ? "of consumption"       : "des Verbrauchs (Autarkiegrad)";
 # PV-Abregelungsverlust"
-   $use_w_curb_txt  = "$use_w_curb_txt $en2         " unless $curb;
+   $use_w_curb_txt  = "$use_w_curb_txt $de1          " unless $curb;
 my $nominal_sum = $#PV_peaks == 0 ? "" : " = $PV_peaks Wp";
 $lat = " $lat" unless $lat =~ m/^-?\d\d/;
 $lon = " $lon" unless $lon =~ m/^-?\d\d/;
@@ -747,14 +764,14 @@ print "$nominal_txt $en2         =" .W($nominal_power_sum)."p$nominal_sum\n";
 print "$max_gross_txt $en1        =".W($PV_gross_max)." $on $PV_gross_max_tm\n";
 print "$PV_gross_txt $en1            =".kWh($PV_gross_out_sum)."\n";
 print "$PV_net_txt $en2             =" .kWh($PV_net_out_sum).
-              " $at $system_eff_txt $sys_efficiency%\n";
+    " $at $system_eff_txt $pvsys_eff%, $ieff_txt $inverter_eff%\n";
 print "$PV_loss_txt $en2 $en2         ="       .kWh($PV_net_loss_sum).
     " $during ".round($PV_net_loss_hours)." h $by_curb_at $curb W\n" if $curb;
 print "$yield $daytime  =   $yield_daytime %\n";
 
 print "\n";
 print "$load_txt $en2        =" .kWh($load_sum)."\n";
-print "$use_w_curb_txt  $en1=" .kWh($PV_used_sum)."\n";
+print "$use_w_curb_txt  ".($curb ? $en1 : "")."=" .kWh($PV_used_sum)."\n";
 print "$use_loss_txt $de1    =" .kWh($PV_usage_loss_sum)." $during "
     .round($PV_usage_loss_hours)." h $by_curb_at $curb W\n" if $curb;
 print "$grid_feed_txt $en3            =" .kWh($grid_feed_in)."\n";
@@ -763,9 +780,7 @@ print "$load_cover_txt         =   $load_coverage % $of_consumption\n";
 if ($capacity) {
     print "\n".
         "$capacity_txt $en1          =" .W($capacity)."h $with ".
-        "$ceff_txt $charge_eff %,\n";
-    printf "$seff_txt $en3         %3d %%,".
-        " $en1 $deff_txt $discharge_eff %%\n", $storage_eff;
+        "$ceff_txt $charge_eff%, $seff_txt $storage_eff%\n";
     print "$own_storage_txt =" .kWh($PV_used_via_storage)."\n";
     print "$stored_txt $en2$en2        =" .kWh($charge_sum)."\n";
     # Vollzyklen, Kapazitätsdurchgänge pro Jahr Kapazitätsdurchsatz:

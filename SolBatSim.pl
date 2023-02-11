@@ -20,7 +20,8 @@
 #            [-ieff <Wechselrichter-Wirkungsgrad in %, ansonsten 94]
 #            [-test <Lastpunkte pro Stunde, für Prüfberechnung über 24 Stunden>]
 #            [-en] [-tmy] [-curb <Wechselrichter-Ausgangsleistungs-Limit in W>]
-#            [-hour <Datei>] [-day <Datei>] [-week <Datei>] [-month <Datei>]
+#            [-hour <Statistik-Datei>] [-day <Stat.Datei>] [-week <Stat.Datei>]
+#            [-month <Stat.Datei>] [-season <Stat.Datei>] [-max <Stat.Datei>]
 # Mit "-en" erfolgen die Textausgaben auf Englisch. Fehlertexte sind englisch.
 # Wenn PV-Daten für mehrere Jahre gegeben sind, wird der Durchschnitt berechnet
 # oder mit Option "-tmy" Monate für ein typisches meteorologisches Jahr gewählt.
@@ -58,7 +59,8 @@
 #          [-ieff <inverter efficiency in %, default 94]
 #          [-test <load points per hour, for debug calculation over 24 hours>]
 #          [-en] [-tmy] [-curb <inverter output power limit in W>]
-#          [-hour <file>] [-day <file>] [-week <file>] [-month <file>]
+#          [-hour <statistics file>] [-day <stat file>] [-week <stat file>]
+#          [-month <stat file>] [-season <file>] [-max <stat file>]
 # Use "-en" for text output in English. Error messages are all in English.
 # When PV data for more than one year is given, the average is computed, while
 # with the option "-tmy" months for a typical meteorological year are selected.
@@ -142,7 +144,7 @@ sub str_arg {
     return shift @ARGV;
 }
 
-my ($en, $tmy, $curb, $max, $hourly, $daily, $weekly,  $monthly);
+my ($en, $tmy, $curb, $max, $hourly, $daily, $weekly,  $monthly, $seasonly);
 while ($#ARGV >= 0) {
     if      ($ARGV[0] eq "-test"    ) { $test         = num_arg();
     } elsif ($ARGV[0] eq "-en"      ) { $en           =  no_arg();
@@ -175,11 +177,11 @@ while ($#ARGV >= 0) {
     } elsif ($ARGV[0] eq "-day"     ) { $daily        = str_arg();
     } elsif ($ARGV[0] eq "-week"    ) { $weekly       = str_arg();
     } elsif ($ARGV[0] eq "-month"   ) { $monthly      = str_arg();
+    } elsif ($ARGV[0] eq "-season"  ) { $seasonly     = str_arg();
     } else { die "Invalid option: $ARGV[0]";
     }
 }
 
-die "Numeric argument of -test option must not be 0" if defined $test && !$test;
 use constant TEST_START      =>  6; # load starts in the morning
 use constant TEST_LENGTH     => 24; # until 6 AM on the next day
 use constant TEST_END        => TEST_START + TEST_LENGTH;
@@ -199,7 +201,8 @@ my $test_load = defined $consumption ?
 if ($test) {
     $load_profile  = "test load data";
     my $pv_gross   = $#PV_peaks < 0 ? TEST_PV_GROSS : $PV_peaks[0]; # in W
-    my $pv_power   = defined $pvsys_eff ? $pv_gross * $pvsys_eff : 1000; # in W
+    my $pv_power   = defined $pvsys_eff ? $pv_gross * $pvsys_eff :
+        sprintf("%.0e", $pv_gross); # in W
     # after PV system losses, which may be derived as follows:
     $pvsys_eff     = $pv_gross ? $pv_power / $pv_gross : 0.92
         unless defined $pvsys_eff;
@@ -292,7 +295,6 @@ use constant WINTER_START  => 10; # dark season
 use constant WINTER_END    => 04;
 
 my $sum_items = 0;
-my $items = 0; # number of load measure points in current hour
 my $load_max = 0;
 my $load_max_time;
 my ($load_sum, $night_sum, $morning_sum, $bright_sum,
@@ -328,6 +330,7 @@ sub get_profile {
 
     my $warned_just_before = 0;
     my $weekday = 4; # HTW load profiles start on Friday (of 2010), Monday == 0
+    my $items = 0; # number of load measure points in current hour
     while (my $line =
            !$test ? <$IN>
            : "date".(",".($hour_per_year < TEST_START ||
@@ -666,8 +669,8 @@ sub simulate()
         # my $needed = 0;
         my $usages = 0;
         my $curb_losses_this_hour = 0;
-        my $AC_coupling_losses_this_hour = 0;
-        $items = $items_by_hour[$month][$day][$hour];
+        my $AC_coupling_losses_this_hour = 0; # TODO calc AC losses on charge side
+        my $items = $items_by_hour[$month][$day][$hour];
 
         # factor out $items for optimizing the inner loop
         if (defined $capacity && $items != 1) {
@@ -685,8 +688,8 @@ sub simulate()
         for (my $item = 0; $item < $items; $item++) {
             my $loss = 0;
             my $power_needed = $load_by_item[$month][$day][$hour][$item];
-            die "load_by_item[$month][$day][$hour][$item] is undefined"
-                unless defined $power_needed;
+            die "Internal error: load_by_item[$month][$day][$hour][$item] ".
+                "is undefined" unless defined $power_needed;
             printf("%02d".minute_string($item, $items)." load=%4d PV net=%4d ",
                    $hour, $power_needed, $net_pv_power) if $test_started;
             # $needed += $power_needed;
@@ -813,7 +816,6 @@ sub simulate()
                         if (defined $max_feed && $const_feed) {
                             # $feed_sum += $discharge;
                             my $dis_feed_in = $discharge_net - $power_needed;
-                            print "####$dis_feed_in = $discharge_net - $power_needed\n";
                             if ($dis_feed_in > 0) {
                                 $grid_feed_in += $dis_feed_in;
                                 $discharge_net -= $dis_feed_in;
@@ -829,19 +831,15 @@ sub simulate()
             }
             printf("used=%4d\n", $pv_used + .5) if $test_started;
             $usages += $pv_used;
-            $PV_used_by_item[$month][$day][$hour][$item] =
-                round($pv_used * $load_scale) if $max;
+            $PV_used_by_item[$month][$day][$hour][$item] = $pv_used if $max;
 
             if ($PV_loss != 0 && $power_needed > 0) {
                 $loss += min($PV_loss, $power_needed);
             }
+            $PV_usage_loss_by_item[$month][$day][$hour][$item] = $loss if $max;
             if ($loss != 0) {
                 $curb_losses_this_hour += $loss;
-                $PV_usage_loss_by_item[$month][$day][$hour][$item] =
-                    round($loss * $load_scale) if $max;
                 $PV_usage_loss_hours++; # will be normalized by $items
-            } elsif ($max) {
-                $PV_usage_loss_by_item[$month][$day][$hour][$item] = 0;
             }
         }
         # $spill_loss += ($net_pv_power - $feed_sum / $items) * $load_scale
@@ -885,7 +883,7 @@ sub simulate()
     $PV_net_out_sum /= $years;
     $PV_net_bright_sum /= $years;
     $PV_used_sum /= $years;
-    $PV_usage_losses *= $load_scale / $years;
+    $PV_usage_losses /= $years;
     $PV_usage_loss_hours /= ($sum_items / YearHours * $years);
     # die "Inconsistent load calculation: sum = $sum vs. needed = $sum_needed"
     #     if round($sum) != round($sum_needed);
@@ -920,20 +918,19 @@ my $system_eff_txt   = $en ? "PV system eff."       : "PV-System-Eff.";
 my $own_txt          = $en ? "PV own use"           : "PV-Eigenverbrauch";
 my $own_ratio_txt    = $own_txt . ($en ? " ratio"  : "santeil");
 my $own_storage_txt  = $en ?"PV own use via storage":"PV-Nutzung über Speicher";
-my $load_cover_txt   = $en ? "use coverage ratio"  : "Eigendeckungsanteil";
+my $load_cover_txt   = $en ? "use coverage ratio"   : "Eigendeckungsanteil";
 my $PV_gross_txt     = $en ? "PV gross yield"       : "PV-Bruttoertrag";
 my $PV_net_txt       = $en ? "PV net yield"         : "PV-Nettoertrag";
-my $PV_net_curb_txt  = $en ? "inverter output ".($curb ? "" : "not ")."curbed"
-                  : "WR-Ausgangsleistung ".($curb ? "" : "nicht ")."gedrosselt";
 my $PV_loss_txt      = $en ? "PV yield net loss"    : "PV-Netto-Ertragsverlust";
 my $consumpt_txt     = $en ? "consumption by household"
                            : "Verbrauch durch Haushalt";
 my $load_const_txt   = $en ? "constant load"        : "Konstante Last";
-my $load_during_txt  =($en ? "on the first $load_days days a week"
-                           : "an den ersten $load_days Tagen der Woche").
-                      ($feed_from == 0 && $feed_to == 24) ? "" :
-                      ($en ? " from $load_from to $load_to h"
-                           : " von $load_from bis $load_to Uhr")
+my $load_during_txt  =($load_days == 7 ? "" :
+                       ($en ? "on the first $load_days days a week"
+                            : "an den ersten $load_days Tagen der Woche")).
+                      (($load_from == 0 && $load_to == 24) ? "" :
+                       ($en ? " from $load_from to $load_to h"
+                           : " von $load_from bis $load_to Uhr"))
                       if defined $load_const;
 my $usage_loss_txt   = $en ? "$own_txt net loss"    :  $own_txt."sverlust";
 my $net_de           = $en ? ""                     : " netto";
@@ -942,6 +939,7 @@ my $without_curb     = $en ? "without curb"         : "ohne Drosselung";
 my $with_curb        = $en ? "with curb"            : "mit Drosselung";
 my $opt_with_curb    = ($curb ? " $with_curb" : "");
 my $grid_feed_txt    = $en ? "grid feed-in"         : "Netzeinspeisung";
+my $sum_txt          = $en ? "sums"                 : "Summen";
 my $each             = $en ? "each"                 : "alle";
 my $yearly_txt       = $en ? "yearly"               : "jährlich";
 my $capacity_txt     = $en ? "storage capacity"     : "Speicherkapazität";
@@ -998,12 +996,13 @@ $inverter_eff *= 100;
 sub save_statistics {
     my $file = shift;
     return unless $file;
-    my $res_txt = shift;
+    my $type_txt= shift;
     my $max     = shift;
     my $hourly  = shift;
     my $daily   = shift;
     my $weekly  = shift;
     my $monthly = shift;
+    my $season  = shift;
     open(my $OU, '>',$file) or die "Could not open statistics file $file: $!\n";
 
     my $nominal_sum = $#PV_peaks == 0 ? $PV_peaks[0] : "=$PV_peaks";
@@ -1013,12 +1012,14 @@ sub save_statistics {
     print $OU "".round_1000($load_sum).", ";
     print $OU "$load_const, " if defined $load_const;
     print $OU "$load_profile, ".join(", ", @PV_files)."\n";
+
     print $OU " $nominal_txt in Wp, $max_gross_txt in W, "
         ."$curb_txt in W, $system_eff_txt in %, $ieff_txt in %, "
         ."$own_ratio_txt in %, $load_cover_txt in %\n";
     print $OU "$nominal_sum, ".round($PV_gross_max).", "
         .($curb ? $curb : $en ? "none" : "keine").
         ", $pvsys_eff, $inverter_eff, $own_usage, $load_coverage\n";
+
     print $OU "$capacity_txt in Wh, "
         .(defined $bypass ? "$bypass_txt in W$spill_txt" : $optimal_charge).", "
         .(defined $max_feed ? "$feed_txt in W$feed_during_txt, "
@@ -1029,34 +1030,50 @@ sub save_statistics {
         ."$charging_loss_txt in kWh, $storage_loss_txt in kWh, "
         ."$own_storage_txt in kWh, $stored_txt in kWh, $cycles_txt\n"
         if defined $capacity;
-    print $OU "$capacity, ". (defined $bypass ? $bypass : "")
-        .", $max_feed, $charge_eff, $storage_eff, "
+    print $OU "$capacity, ". (defined $bypass ? $bypass : "").", "
+        .(defined $max_feed ? $max_feed : "").", $charge_eff, $storage_eff, "
         .($AC_coupled ? round_1000($AC_coupling_losses) : "").", "
         .round_1000($spill_loss).", "
         .round_1000($charging_loss).", ".round_1000($storage_loss).", "
         .round_1000($PV_used_via_storage).", ".round_1000($charge_sum)
         .", $cycles\n" if defined $capacity;
-    print $OU "$yearly_txt, $PV_gross_txt, $PV_net_txt, "
-        .($curb?"$PV_loss_txt $by_curb, $usage_loss_txt $net_de $by_curb, ": "")
-        ."$own_txt$opt_with_curb, ".
-        "$grid_feed_txt, $each in kWh\n";
-    print $OU "".($en ? "sums" : "Summen"  ).", ".
+
+    print $OU "$yearly_txt, $PV_gross_txt, "
+        .($curb ? "$PV_loss_txt $by_curb, " : "")."$PV_net_txt, "
+        .($curb ? "$usage_loss_txt$net_de $by_curb, ": "")
+        ."$own_txt$opt_with_curb, $grid_feed_txt\n";
+    print $OU "$sum_txt, ".
         round_1000($PV_gross_out_sum ).", ".
+        ($curb ? round_1000($PV_net_losses  ).", " : "").
         round_1000($PV_net_out_sum   ).", ".
-        ($curb ? round_1000($PV_net_losses  ).", ".
-                 round_1000($PV_usage_losses).", " : "").
+        ($curb ? round_1000($PV_usage_losses).", " : "").
         round_1000($PV_used_sum      ).", ".
-        round_1000($grid_feed_in     )."\n";
-    print $OU "$res_txt, $PV_gross_txt, $PV_net_txt, "
-        .($curb ? "$PV_net_curb_txt, "        : "")
+        round_1000($grid_feed_in     ).", $each in kWh\n";
+    print $OU "\n";
+
+    my $i = 10 + (defined $capacity ? 2 : 0);
+    my $j = $i - 1 + ($max ? $sum_items : $hourly ? YearHours
+        : $daily ? 365 : $weekly ? 52 : $monthly ? 12 : 4);
+    print $OU "$sum_txt,=SUM(B$i:B$j),=SUM(C$i:C$j),=SUM(D$i:D$j),=SUM(E$i:E$j)"
+        .($curb ? ",=SUM(F$i:F$j),=SUM(G$i:G$j)" : "").", $each in Wh\n";
+    print $OU "$type_txt, $PV_gross_txt, "
+        ."$PV_net_txt".($curb ? " $without_curb" : "").", "
+        .($curb ? "$PV_net_txt $with_curb, "        : "")
         .($curb ? "$own_txt $without_curb, " : "")."$own_txt$opt_with_curb, "
-        ."$consumpt_txt, "."$each in Wh\n";
-    ($month, my $week, my $days, $day, $hour) = (1, 1, 0, 1, 0);
+        ."$consumpt_txt, "."$each in ".($max ? "m" : "")."Wh\n";
+    my $fact = $max ? 1000 : 1;
+    (my $week, my $days, $hour) = (1, 0, 0);
+    ($month, $day) = $season && !$test ? (2, 5) : (1, 1);
     my ($gross, $PV_loss, $net, $hload, $loss, $used) = (0, 0, 0, 0, 0, 0);
-    while ($month <= 12) {
+    while ($days < 365) {
         my $tim;
         if ($weekly) {
-            $tim = sprintf("%02d", $week);
+            $tim = $week;
+        } elsif ($season) {
+            $tim = $season== 1 ? ($en ? "spring" : "Frühjahr")
+                : $season == 2 ? ($en ? "summer" : "Sommer")
+                : $season == 3 ? ($en ? "autumn" : "Herbst")
+                :                ($en ? "winter" : "Winter");
         } else {
             $tim = sprintf("%02d", $month);
             $tim = $tim."-".sprintf("%02d", $day ) if $daily || $hourly || $max;
@@ -1064,11 +1081,21 @@ sub save_statistics {
         }
         my $gross_across = 0;
         for (my $year = 0; $year < $years; $year++) {
-            $gross_across += $PV_gross_out[$year][$month][$day][$hour];
+            my $PV_gross =  $PV_gross_out[$year][$month][$day][$hour];
+            die "Internal error: PV_gross_out[$year][$month][$day] is undefined"
+                . " on day $days" unless defined $PV_gross;
+            $gross_across += $PV_gross;
         }
-        $gross   += round($gross_across / $years);
-        $PV_loss += round($PV_net_loss  [$month][$day][$hour] / $years);
-        $net     += round($PV_net_out   [$month][$day][$hour] / $years);
+        my $items = $items_by_hour[$month][$day][$hour];
+        $gross   += round($gross_across / $years * $fact);
+        $PV_loss += round($PV_net_loss  [$month][$day][$hour] / $years * $fact);
+        $net     += round($PV_net_out   [$month][$day][$hour] / $years * $fact);
+        if ($max) {
+            $gross   = round($gross   / $items);
+            $PV_loss = round($PV_loss / $items);
+            $net     = round($net     / $items);
+        }
+        # not used if $max:
         $hload   += round($load_by_hour [$month][$day][$hour] * $load_scale);
         $loss    += round($PV_usage_loss[$month][$day][$hour] / $years);
         $used    += round($PV_used      [$month][$day][$hour] / $years);
@@ -1077,41 +1104,54 @@ sub save_statistics {
             $hour = 0;
             $days++;
             $week++ if $days % 7 == 0
-                && $days < 365; # count Dec-31 as part of week 52
+                && $days < 364; # count Dec-31 as part of week 52
+            $season++ if $season && $days % (364 / 4) == 0
+                && $days < 364; # count last day as part of winter (1 day more)
         }
         adjust_day_month();
-        if ($max || $hourly || ($hour == 0 &&
-            ($daily || $weekly && $days % 7 == 0 || $monthly && $day == 1))) {
+
+        if ($max || $hourly || $test && $days * 24 + $hour == TEST_END ||
+            ($hour == 0
+             && ($days == 365 ||
+                 ($daily ||
+                  $weekly && $days < 364 && $days % 7 == 0 ||
+                  $monthly && $day == 1 ||
+                  $season && $days < 364 && $days % (364 / 4) == 0)))) {
             for (my $i = 0; $i < ($max ? $items : 1); $i++) {
                 my $minute = $hourly ? ":00" : "";
                 if ($max) {
                     $minute = minute_string($i, $items);
-                    $hload = round($load_by_item[$m][$d][$h][$i] * $load_scale);
-                    $loss = $PV_usage_loss_by_item[$m][$d][$h][$i];
-                    $used = $PV_used_by_item      [$m][$d][$h][$i];
+                    my $s = $load_scale / $items * $fact;
+                    $hload = round(         $load_by_item[$m][$d][$h][$i] * $s);
+                    $loss  = round($PV_usage_loss_by_item[$m][$d][$h][$i] * $s);
+                    $used  = round($PV_used_by_item      [$m][$d][$h][$i] * $s);
                 }
                 print $OU "$tim$minute, $gross, ".($net + $PV_loss).", "
                     .($curb ?             "$net, " : "")
-                    .($curb ? ($used + $loss).", " : "")."$used ,$hload\n";
+                    .($curb ? ($used + $loss).", " : "")."$used, $hload\n";
             }
             ($gross, $PV_loss, $net, $hload, $loss, $used) = (0, 0, 0, 0, 0, 0);
         }
-        last if $test && ($day - 1) * 24 + $hour == TEST_END;
+        ($month, $day) = (1, 1) if $month > 12;
+        last if $test && $days * 24 + $hour == TEST_END;
     }
     close $OU;
 }
 
-my $max_txt   = $items == 60 ? ($en ? "minute" : "Minute")
-                             : ($en ? "point in time" : "Zeitpunkt");
+my $max_txt = $sum_items / $hour_per_year == 60
+             ? ($en ? "minute" : "Minute")
+             : ($en ? "point in time" : "Zeitpunkt");
 my $hour_txt  = $en ? "hour"   : "Stunde";
 my $date_txt  = $en ? "date"   : "Datum";
 my $week_txt  = $en ? "week"   : "Woche";
 my $month_txt = $en ? "month"  : "Monat";
-save_statistics($max    , $max_txt  , 1, 0, 0, 0, 0);
-save_statistics($hourly , $hour_txt , 0, 1, 0, 0, 0);
-save_statistics($daily  , $date_txt , 0, 0, 1, 0, 0);
-save_statistics($weekly , $week_txt , 0, 0, 0, 1, 0);
-save_statistics($monthly, $month_txt, 0, 0, 0, 0, 1);
+my $season_txt= $en ? "season" : "Saison";
+save_statistics($max    , $max_txt  , 1, 0, 0, 0, 0, 0);
+save_statistics($hourly , $hour_txt , 0, 1, 0, 0, 0, 0);
+save_statistics($daily  , $date_txt , 0, 0, 1, 0, 0, 0);
+save_statistics($weekly , $week_txt , 0, 0, 0, 1, 0, 0);
+save_statistics($monthly, $month_txt, 0, 0, 0, 0, 1, 0);
+save_statistics($seasonly,$season_txt,0, 0, 0, 0, 0, 1);
 
 my $at             = $en ? "with"                 : "bei";
 my $and            = $en ? "and"                  : "und";
@@ -1183,7 +1223,7 @@ if (defined $capacity) {
 }
 
 print "$own_txt $en4 $en3         =" .kWh($PV_used_sum)."$opt_with_curb\n";
-print "$usage_loss_txt $en3$en3  =" .kWh($PV_usage_losses)." $net_de $during "
+print "$usage_loss_txt $en3$en3  =" .kWh($PV_usage_losses)."$net_de $during "
     .round($PV_usage_loss_hours)." h $by_curb_at $curb W\n" if $curb;
 print "$grid_feed_txt $en3            =" .kWh($grid_feed_in)."\n";
 print "$own_ratio_txt $en4 $en4  =  ".sprintf("%3d", $own_usage)." % $of_yield\n";

@@ -6,6 +6,7 @@
 #
 # Nutzung: Solar.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
 #            (<PV-Daten-Datei> [<Brutto-Nennleistung in Wp>])+
+#            [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>
 #            [-load <konstante Last in W> [<Zahl der Tage pro Woche, sonst 5>:
 #                   <von Uhrzeit, sonst 8 Uhr>..<bis Uhrzeit, sonst 16 Uhr>]]
 #            [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
@@ -45,6 +46,7 @@
 #
 # Usage: Solar.pl <load profile file> [<consumption per year in kWh>]
 #          (<PV data file> [<nominal gross power in Wp>])+
+#          [-bend <load distort factors for hour 0,..,23 each day, default 1>
 #          [-load <constant load in W> [<count of days per week, default 5>:
 #                 <from hour, default 8 o'clock>..<to hour, default 16>]]
 #          [-peff <PV system efficiency in %, default from PV data file(s)>]
@@ -85,12 +87,13 @@ use warnings;
 die "Missing command line arguments" if $#ARGV < 0;
 my $test         = 0; # unless 0, number of test load points per hour
 my $load_profile = shift @ARGV unless $ARGV[0] =~ m/^-/; # file name
-my $consumption  = shift @ARGV # kWh/year, default is implicit from load profile
-    if $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/;
+my @load_distort = (1) x 24; # distortion factors per hour, by default none
 my $load_const;     # constant load in W, during certain times:
 my $load_days    =  5;  # count of days per week with constant load
 my $load_from    =  8;  # hour of constant load begin
 my $load_to      = 16;  # hour of constant load end
+my $consumption  = shift @ARGV # kWh/year, default is implicit from load profile
+    if $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/;
 
 use constant YearHours => 24 * 365;
 
@@ -124,7 +127,7 @@ sub no_arg {
 sub num_arg {
     my $opt = $ARGV[0];
     die "Missing number argument for $opt option"
-        unless $#ARGV >= 1 && $ARGV[1] =~ m/^[-\d\.]+$/;
+        unless $#ARGV >= 1 && $ARGV[1] =~ m/^-?[\d\.]+$/ && $ARGV[1] ne ".";
     shift @ARGV;
     my $arg = shift @ARGV;
     die "Numeric argument $arg for $opt option is negative"
@@ -144,10 +147,12 @@ sub str_arg {
     return shift @ARGV;
 }
 
+my $load_factors;
 my ($en, $tmy, $curb, $max, $hourly, $daily, $weekly,  $monthly, $seasonly);
 while ($#ARGV >= 0) {
     if      ($ARGV[0] eq "-test"    ) { $test         = num_arg();
     } elsif ($ARGV[0] eq "-en"      ) { $en           =  no_arg();
+    } elsif ($ARGV[0] eq "-bend"    ) { $load_factors = str_arg();
     } elsif ($ARGV[0] eq "-load"    ) { $load_const   = num_arg();
                                        ($load_days, $load_from, $load_to)
                                            = ($1, $2, $3) if $#ARGV >= 0 &&
@@ -219,21 +224,32 @@ if ($test) {
 die "Missing load profile file name - should be first CLI argument"
     unless defined $load_profile;
 die "Missing PV data file name" if $#PV_peaks < 0;
+if (defined $load_factors) {
+    my @factors = split ",", $load_factors;
+    my $n = $#factors;
+    die "More than 24 items given as -bend option argument" if $n >= 24;
+    for (my $i = 0; $i <= $n; $i++) {
+        my $val = $factors[$i];
+        die "Item '$val' of -bend option argument is not a number"
+            unless $val =~ m/^\s*-?[\d\.]+\s*$/ && $val ne ".";
+        $load_distort[$i] = $val;
+    }
+}
 if (defined $load_const) {
-    die "days count for -load option must be in range 0..7"
+    die "Days count for -load option must be in range 0..7"
         if  $load_days > 7;
-    die "begin hour for -load option must be in range 0..24"
+    die "Begin hour for -load option must be in range 0..24"
         if  $load_from > 24;
-    die "end hour for -load option must be in range 0..24"
+    die "End hour for -load option must be in range 0..24"
         if  $load_to > 24;
 }
 $inverter_eff = 0.94    unless defined $inverter_eff;
 if (defined $capacity) {
     $charge_eff  = 0.94 unless defined $charge_eff;
     $storage_eff = 0.95 unless defined $storage_eff;
-    die "begin hour for -feed option must be in range 0..24"
+    die "Begin hour for -feed option must be in range 0..24"
         if  $feed_from > 24;
-    die "end hour for -feed option must be in range 0..24"
+    die "End hour for -feed option must be in range 0..24"
         if  $feed_to > 24;
 } else {
     die   "-ac option requires -capacity option" if defined $AC_coupled;
@@ -338,7 +354,7 @@ sub get_profile {
                           ? 0 : $test_load)) x $test ."\n") {
         chomp $line;
         next if $line =~ m/^\s*#/; # skip comment line
-        my @sources = split "," , $line;
+        my @sources = split ",", $line;
         my $n = $#sources;
         shift @sources; # ignore date & time info
         if ($items > 0 && $items != $n) {
@@ -360,7 +376,7 @@ sub get_profile {
             }
         } else {
             for (my $item = 0; $item < $n; $item++) {
-                my $load = $sources[$item];
+                my $load = $sources[$item] * $load_distort[$hour];
                 die "Error parsing load item: '$load' in $file line $."
                     unless $load =~ m/^\s*-?[\.\d]+\s*$/;
                 if ($load > $load_max) {
@@ -414,6 +430,7 @@ get_profile($load_profile);
 my $profile_txt = $en ? "load profile file" : "Lastprofil-Datei";
 my $pv_data_txt = $en ? "PV data file(s)"   : "PV-Daten-Datei(en)";
 my $p_txt = $en ? "load data points per hour  " : "Last-Datenpunkte pro Stunde";
+my $d_txt = $en ? "load distortions each hour"  : "Last-Verzerrung je Stunde";
 my $t_txt = $en ? "total cons. acc. to profile" : "Verbrauch gemäß Lastprofil ";
 my $W_txt = $en ? "portion per weekday (Mo-Su)" :"Anteil pro Wochentag (Mo-So)";
 my $n_txt = $en ? "portion 12 AM -  6 AM      " : "Anteil  0 -  6 Uhr MEZ     ";
@@ -436,6 +453,7 @@ my $s10   = "          ";
 my $s13   = "             ";
 print "$profile_txt$de1$s10 : $load_profile\n" unless $test;
 print "$p_txt = ".sprintf("%4d", $sum_items / $hour_per_year)."\n";
+print "$d_txt $de1 = @load_distort\n" if defined $load_factors;
 print "$t_txt =".kWh($load_sum)."\n";
 if ($load_sum != 0) {
     if (!$test) {
@@ -492,8 +510,8 @@ sub get_power {
             check_consistency($1, $lon, "longitude", $file) if $lon;
             $lon = $1;
         }
-        $slope   = $1 if (!$slope   && m/^Slope:\s*(.+)$/);
-        $azimuth = $1 if (!$azimuth && m/^Azimuth:\s*(.+)$/);
+        $slope   = $1 if (!$slope   && m/^Slope:\s*([\d\.]+ deg\.)\s*$/);
+        $azimuth = $1 if (!$azimuth && m/^Azimuth:\s*([\d\.]+ deg\.)\s*$/);
         if (!$nominal_power_deflt && m/Nominal power.*? \(kWp\):\s*([\d\.]+)/) {
             $nominal_power_deflt = $1 * 1000;
             $nominal_power = $nominal_power_deflt unless $nominal_power;
@@ -1007,9 +1025,11 @@ sub save_statistics {
 
     my $nominal_sum = $#PV_peaks == 0 ? $PV_peaks[0] : "=$PV_peaks";
     print $OU "$consumpt_txt in kWh, ";
+    print $OU "$d_txt, " if defined $load_factors;
     print $OU "$load_const_txt in W $load_during_txt, " if defined $load_const;
     print $OU "$profile_txt, $pv_data_txt\n";
     print $OU "".round_1000($load_sum).", ";
+    print $OU "@load_distort, " if defined $load_factors;
     print $OU "$load_const, " if defined $load_const;
     print $OU "$load_profile, ".join(", ", @PV_files)."\n";
 
@@ -1129,6 +1149,7 @@ sub save_statistics {
                 print $OU "$tim$minute, $gross, ".($net + $PV_loss).", "
                     .($curb ?             "$net, " : "")
                     .($curb ? ($used + $loss).", " : "")."$used, $hload\n";
+                # TODO add feed
             }
             ($gross, $PV_loss, $net, $hload, $loss, $used) = (0, 0, 0, 0, 0, 0);
         }
@@ -1183,7 +1204,7 @@ print "$yield $daytime  =   $yield_daytime %\n";
 
 print "\n";
 print "$consumpt_txt    =" .kWh($load_sum)."\n";
-print "$load_const_txt $en1             =".W($load_const)." $load_during_txt\n"
+print "$load_const_txt $en1             =".W($load_const)."  $load_during_txt\n"
     if defined $load_const;
 if (defined $capacity) {
     print "\n".

@@ -748,8 +748,8 @@ sub simulate()
             # feed by constant bypass or just as much as used (optimal charge)
             my $pv_used = defined $bypass ? $bypass * $inverter_eff
                 : $power_needed; # preliminary
-            my $avail_power = $net_pv_power - $pv_used;
-            if ($avail_power < 0) {
+            my $excess_power = $net_pv_power - $pv_used;
+            if ($excess_power < 0) {
                 $pv_used = $net_pv_power;
                 # == min($net_pv_power,
                 #        $bypass ? $bypass * $inverter_eff : $power_needed)
@@ -765,21 +765,21 @@ sub simulate()
             }
             $power_needed -= $pv_used;
 
-            if (defined $capacity) { # storage available
+            if (defined $capacity) { # storage present
                 my $capacity_to_fill = $capacity - $charge;
                 $capacity_to_fill = 0 if $capacity_to_fill < 0;
                 my ($charge_input, $charge_delta) = (0, 0);
-                if ($avail_power > 0) {
+                if ($excess_power > 0) {
                     # when charging is DC-coupled, no loss through inverter
-                    $avail_power /= $inverter_eff_never_0 unless $AC_coupled;
-                    # $avail_power is the power available for charging
+                    $excess_power /= $inverter_eff_never_0 unless $AC_coupled;
+                    # $excess_power is the power available for charging
                     my $need_for_fill = $capacity_to_fill / $charge_eff_never_0;
                     # optimal charge: exactly as much as unused and fits in
-                    $charge_input = $avail_power;
-                        # will become min($avail_power, $need_for_fill);
-                    my $surplus = $avail_power - $need_for_fill;
-                    printf("[avail=%4d,surplus=%4d] ",
-                           $avail_power, max($surplus, 0) +.5) if $test_started;
+                    $charge_input = $excess_power;
+                        # will become min($excess_power, $need_for_fill);
+                    my $surplus = $excess_power - $need_for_fill;
+                    printf("[excess=%4d,surplus=%4d] ",
+                           $excess_power, max($surplus, 0) +.5) if $test_started;
                     if ($surplus > 0) {
                         $charge_input = $need_for_fill; # TODO check AC-coupled
                         my $surplus_net = $surplus;
@@ -822,11 +822,11 @@ sub simulate()
                     $charge_sum += $charge_delta;
                     # $charging_loss += $charge_input - $charge_delta;
                 } elsif ($test_started) {
-                    printf("          "); # no $avail_power
+                    printf("          "); # no $excess_power
                     printf("              "); # no surplus
                 }
                 my $print_charge = $test_started &&
-                    ($avail_power > 0 || $charge > 0);
+                    ($excess_power > 0 || $charge > 0);
                 printf("chrg loss=%4d dischrg needed=%4d [charge %4d + %4d ",
                        ($charge_input - $charge_delta) *
                        ($AC_coupled ? 1 : $inverter_eff) + .5,$power_needed +.5,

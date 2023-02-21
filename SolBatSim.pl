@@ -438,8 +438,11 @@ sub get_profile {
 
 get_profile($load_profile);
 
-my $profile_txt = $en ? "load profile file" : "Lastprofil-Datei";
-my $pv_data_txt = $en ? "PV data file(s)"   : "PV-Daten-Datei(en)";
+my $profile_txt = $en ? "load profile file"     : "Lastprofil-Datei";
+my $pv_data_txt = $en ? "PV data file"          : "PV-Daten-Datei";
+my $plural_txt  = $en ? "(s)"                   : "(en)";
+my $slope_txt   = $en ? "slope"                 : "Neigungswinkel";
+my $azimuth_txt = $en ? "azimuth"               : "Azimut";
 my $p_txt = $en ? "load data points per hour  " : "Last-Datenpunkte pro Stunde";
 my $d_txt = $en ? "load distortions each hour"  : "Last-Verzerrung je Stunde";
 my $t_txt = $en ? "total cons. acc. to profile" : "Verbrauch gemäß Lastprofil ";
@@ -468,7 +471,7 @@ print "$d_txt $de1 = @load_distort\n" if defined $load_factors;
 print "$t_txt =".kWh($load_sum)."\n";
 if ($load_sum != 0) {
     if (!$test) {
-        print "$W_txt=   ";
+        print "$W_txt$en1=   ";
         for (my $weekday = 0; $weekday < 7; $weekday++) {
             print "".percent($load_by_weekday[$weekday] / $load_sum)." %";
             print ", " unless $weekday == 6;
@@ -496,8 +499,7 @@ sub get_power {
     my ($file, $nominal_power) = (shift, shift);
     open(my $IN, '<', $file) or die "Could not open PV data file $file: $!\n"
         unless $test;
-    print "".($en ? "PV data file  " : "PV-Daten-Datei")."$s13 : $file"
-        unless $test;
+    print "$pv_data_txt$s13 : $file" unless $test;
 
     # my $sum_needed = 0;
     my ($slope, $azimuth);
@@ -513,22 +515,22 @@ sub get_power {
            .(TEST_PV_START <= $hours && $hours < TEST_PV_END ?
              $nominal_power : 0)."\n") {
         chomp;
-        if (m/^Latitude \(decimal degrees\):\s*([\d\.]+)/) {
+        if (m/^Latitude \(decimal degrees\):[\s,]*(-?\d+([\.,]\d+)?)/) {
             check_consistency($1, $lat, "latitude", $file) if $lat;
             $lat = $1;
         }
-        if (m/^Longitude \(decimal degrees\):\s*([\d\.]+)/) {
+        if (m/^Longitude \(decimal degrees\):[\s,]*(-?\d+([\.,]\d+)?)/) {
             check_consistency($1, $lon, "longitude", $file) if $lon;
             $lon = $1;
         }
-        $slope   = $1 if (!$slope   && m/^Slope:\s*([\d\.]+ deg\.)\s*$/);
-        $azimuth = $1 if (!$azimuth && m/^Azimuth:\s*([\d\.]+ deg\.)\s*$/);
-        if (!$nominal_power_deflt && m/Nominal power.*? \(kWp\):\s*([\d\.]+)/) {
+        $slope   = $1 if (!$slope   && m/^Slope:\s*(-?[\d\.]+ deg[^,]*)/);
+        $azimuth = $1 if (!$azimuth && m/^Azimuth:\s*(-?[\d\.]+ deg[^,]*)/);
+        if (!$nominal_power_deflt && m/Nominal power.*? \(kWp\):[\s,]*(\d+)/) {
             $nominal_power_deflt = $1 * 1000;
             $nominal_power = $nominal_power_deflt unless $nominal_power;
             $nominal_power_sum += $nominal_power;
         }
-        if (!$pvsys_eff_deflt && m/System losses \(%\):\s*([\d\.]+)/) {
+        if (!$pvsys_eff_deflt && m/System losses \(%\):[\s,]*(\d+([\.,]\d+)?)/) {
             my $seff = 1 - $1/100;
             my $eff = percent($seff);
             $pvsys_eff_deflt = $seff / $inverter_eff_never_0;
@@ -539,7 +541,7 @@ sub get_power {
                 && abs($seff - $pvsys_eff * $inverter_eff) >= .5;
             $pvsys_eff = $pvsys_eff_deflt unless defined $pvsys_eff;
             if ($pvsys_eff > 1) {
-                print "\n";
+                print "\n"; # close line started with print "$pv_data_txt..."
                 die "unreasonable PV system efficiency ".round($pvsys_eff * 100)
                     ."% - have -peff and -ieff been used properly?";
             }
@@ -550,6 +552,9 @@ sub get_power {
 
         next unless m/^20\d\d\d\d\d\d:\d\d\d\d,/;
         unless ($test) {
+            print "\n" # close line started with print "$pv_data_txt..."
+                unless $lat && $lon && $slope && $azimuth
+                && $nominal_power_deflt && $pvsys_eff_deflt && $power_provided;
             die "Missing latitude in $file"  unless $lat;
             die "Missing longitude in $file" unless $lon;
             die "Missing slope in $file"     unless $slope;
@@ -591,8 +596,8 @@ sub get_power {
         last if $test && $hours == TEST_END;
     }
     close $IN unless $test;
-    check_consistency($months, 12 * $current_years, "months", $file);
-    check_consistency($hours, YearHours * $current_years, "hours", $file);
+    print "\n"; # close line started with print "$pv_data_txt..."
+
     check_consistency($years, $current_years, "years", $file) if $years;
     $years = $current_years;
     if ($test) {
@@ -608,8 +613,8 @@ sub get_power {
     $azimuth =~ s/ deg\./°/;
     $slope   =~ s/optimum/opt./;
     $azimuth =~ s/optimum/opt./;
-    print "\n".($en ? "slope         " : "Neigungswinkel")."$s13 =  $slope\n";
-    print "".($en ? "azimuth       " : "Azimut        ")."$s13 =  $azimuth\n";
+    print "$slope_txt$en3$en3$en3$s13 =  $slope\n";
+    print "$azimuth_txt $de1      $s13 =  $azimuth\n";
     return $nominal_power;
 }
 
@@ -1060,7 +1065,7 @@ sub save_statistics {
     print $OU "$consumpt_txt in kWh, ";
     print $OU "$d_txt, " if defined $load_factors;
     print $OU "$load_const_txt in W $load_during_txt, " if defined $load_const;
-    print $OU "$profile_txt, $pv_data_txt\n";
+    print $OU "$profile_txt, $pv_data_txt$plural_txt\n";
     print $OU "".round_1000($load_sum).", ";
     print $OU "@load_distort, " if defined $load_factors;
     print $OU "$load_const, " if defined $load_const;

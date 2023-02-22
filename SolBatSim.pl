@@ -495,6 +495,7 @@ print "\n";
 
 my @PV_gross_out;
 my ($start_year, $years);
+my $garbled_hours = 0;
 sub get_power {
     my ($file, $nominal_power) = (shift, shift);
     open(my $IN, '<', $file) or die "Could not open PV data file $file: $!\n"
@@ -550,6 +551,8 @@ sub get_power {
         }
         $power_provided = 1 if m/^time,P,/;
 
+        # work around CSV lines at hour 00 garbled by load&save with LibreOffice
+        $garbled_hours++ if s/^\d+:10:00,0,/20000000:0000,0,/;
         next unless m/^20\d\d\d\d\d\d:\d\d\d\d,/;
         unless ($test) {
             print "\n" # close line started with print "$pv_data_txt..."
@@ -564,7 +567,7 @@ sub get_power {
             die "Missing PV power output data in $file" unless $power_provided;
         }
 
-        next if m/^20\d\d0229:/; # skip data of Feb 29th (in leap year)
+        next if m/^20\d\d0229:/; # skip data of Feb 29th (in leap years)
         $start_year = $1 if (!$start_year && m/^(\d\d\d\d)/);
         if ($tmy) {
             # typical metereological year
@@ -583,8 +586,9 @@ sub get_power {
             $selected_month = $1 if m/^2020(12)/;
             next unless $selected_month;
         }
-        $current_years++ if m/^20..0101:00/;
-        $months++ if m/^20....01:00/;
+        # matching hour 01 rather than 00 due to potentially garbled CSV lines:
+        $current_years++ if m/^20\d\d0101:01/;
+        $months++ if m/^20....01:01/;
 
         die "Missing power data in $file line $_"
             unless m/^(\d\d\d\d)(\d\d)(\d\d):(\d\d)(\d\d),\s?([\d\.]+)/;
@@ -600,6 +604,11 @@ sub get_power {
 
     check_consistency($years, $current_years, "years", $file) if $years;
     $years = $current_years;
+    die "number of years detected is $years in $file"
+        if $years < 1 || $years > 100;
+    check_consistency($months,       12 * $years, "months", $file);
+    check_consistency($hours, YearHours * $years, "hours", $file)
+        if $garbled_hours == 0;
     if ($test) {
         $years = 1;
         return $nominal_power;
@@ -687,9 +696,13 @@ sub simulate()
 
         my $power = $PV_gross_out[$year][$month][$day][$hour];
         if (!defined $power) {
-            $en = 1;
-            die "No power data at ".($start_year + $year)."-".
-                time_string($month, $day, $hour, $minute);
+            if ($hour == 0 && $garbled_hours != 0) {
+                $power = 0; # likely just garbled hour
+            } else {
+                $en = 1;
+                die "No power data at ".($start_year + $year)."-".
+                    time_string($month, $day, $hour, $minute);
+            }
         }
         $PV_gross_out_sum += $power;
         if ($power > $PV_gross_max) {

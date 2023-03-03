@@ -529,7 +529,7 @@ sub get_power {
         }
         $slope   = $1 if (!$slope   && m/^Slope:\s*(-?[\d\.]+ deg[^,]*)/);
         $azimuth = $1 if (!$azimuth && m/^Azimuth:\s*(-?[\d\.]+ deg[^,]*)/);
-        if (!$nominal_power_deflt && m/Nominal power.*? \(kWp\):[\s,]*(\d+)/) {
+        if (!$nominal_power_deflt && m/Nominal power.*? \(kWp\):[\s,]*([\d\.]+)/) {
             $nominal_power_deflt = $1 * 1000;
             $nominal_power = $nominal_power_deflt unless $nominal_power;
             $nominal_power_sum += $nominal_power;

@@ -24,6 +24,7 @@
 #            [-en] [-tmy] [-curb <Wechselrichter-Ausgangsleistungs-Limit in W>]
 #            [-hour <Statistik-Datei>] [-day <Stat.Datei>] [-week <Stat.Datei>]
 #            [-month <Stat.Datei>] [-season <Stat.Datei>] [-max <Stat.Datei>]
+# Alle Uhrzeiten sind in lokaler Winterzeit (MEZ, GMT+1/UTC+1).
 # Mit "-en" erfolgen die Textausgaben auf Englisch. Fehlertexte sind englisch.
 # Wenn PV-Daten für mehrere Jahre gegeben sind, wird der Durchschnitt berechnet
 # oder mit Option "-tmy" Monate für ein typisches meteorologisches Jahr gewählt.
@@ -65,6 +66,7 @@
 #          [-en] [-tmy] [-curb <inverter output power limit in W>]
 #          [-hour <statistics file>] [-day <stat file>] [-week <stat file>]
 #          [-month <stat file>] [-season <file>] [-max <stat file>]
+# All times (hours) are in local winter time (CET, GMT+1/UTC+1).
 # Use "-en" for text output in English. Error messages are all in English.
 # When PV data for more than one year is given, the average is computed, while
 # with the option "-tmy" months for a typical meteorological year are selected.
@@ -98,6 +100,7 @@ my $consumption  = shift @ARGV # kWh/year, default is implicit from load profile
     if $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/;
 
 use constant YearHours => 24 * 365;
+use constant TimeZone => 1; # CET/MEZ
 
 my @PV_files;
 my @PV_peaks;       # nominal/maximal PV output(s), default from PV data file(s)
@@ -593,7 +596,8 @@ sub get_power {
         die "Missing power data in $file line $_"
             unless m/^(\d\d\d\d)(\d\d)(\d\d):(\d\d)(\d\d),\s?([\d\.]+)/;
         my ($year, $month, $day, $hour, $minute_unused, $power) =
-            ($tmy ? $start_year : $1, $2, $3, $4, $5, $6);
+            ($tmy ? $start_year : $1, $2, $3, ($4 + TimeZone) % 24, $5, $6);
+        # for simplicity, attributing hours wrapped via time zone to same day
         $power *= $power_rate unless $test;
         $PV_gross_out[$year - $start_year][$month][$day][$hour] += $power;
         $hours++;

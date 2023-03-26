@@ -350,8 +350,8 @@ sub adjust_day_month {
 
 my $items_per_hour;
 my @items_by_hour;
-my @load_by_item;
-my @load_by_hour;
+my @load_item;
+my @load;
 my @load_by_weekday;
 sub get_profile {
     my @lines;
@@ -401,7 +401,7 @@ sub get_profile {
             ($load_from>$load_to ? ($load_from <= $hour || $hour < $load_to)
                                  : ($load_from <= $hour && $hour < $load_to))) {
             $items_by_hour[$month][$day][$hour] = 1;
-            $load_by_item[$month][$day][$hour][0] = $hload = $load_const;
+            $load_item[$month][$day][$hour][0] = $hload = $load_const;
             if ($hload > $load_max) {
                 $load_max = $hload;
                 $load_max_time = time_string($month, $day, $hour, 0);
@@ -417,7 +417,7 @@ sub get_profile {
                         time_string($month, $day, $hour, 60 * $item / $n);
                 }
                 $hload += $load;
-                $load_by_item[$month][$day][$hour][$item] = $load;
+                $load_item[$month][$day][$hour][$item] = $load;
                 if ($load <= 0) {
                     my $lang = $en;
                     $en = 1;
@@ -433,7 +433,7 @@ sub get_profile {
             }
             $hload /= $n;
         }
-        $load_by_hour[$month][$day][$hour] += $hload;
+        $load[$month][$day][$hour] += $hload;
         $load_by_weekday[$weekday] += $hload;
         $load_sum    += $hload;
         $night_sum   += $hload if   NIGHT_START <= $hour && $hour <   NIGHT_END;
@@ -770,8 +770,8 @@ sub simulate()
         # my $feed_sum = 0 if defined $max_feed;
         for (my $item = 0; $item < $items; $item++) {
             my $loss = 0;
-            my $power_needed = $load_by_item[$month][$day][$hour][$item];
-            die "Internal error: load_by_item[$month][$day][$hour][$item] ".
+            my $power_needed = $load_item[$month][$day][$hour][$item];
+            die "Internal error: load_item[$month][$day][$hour][$item] ".
                 "is undefined" unless defined $power_needed;
             printf("%02d".minute_string($item, $items)." load=%4d PV net=%4d ",
                    $hour, $power_needed, $net_pv_power) if $test_started;
@@ -1186,7 +1186,7 @@ sub save_statistics {
             $net     = round($net     / $items);
         }
         # not used if $max:
-        $hload   += round($load_by_hour [$month][$day][$hour] * $load_scale);
+        $hload   += round($load         [$month][$day][$hour] * $load_scale);
         $loss    += round($PV_usage_loss[$month][$day][$hour] / $years);
         $used    += round($PV_used      [$month][$day][$hour] / $years);
         my ($m, $d, $h) = ($month, $day, $hour);
@@ -1212,7 +1212,7 @@ sub save_statistics {
                 if ($max) {
                     $minute = minute_string($i, $items);
                     my $s = $load_scale / $items * $fact;
-                    $hload = round(         $load_by_item[$m][$d][$h][$i] * $s);
+                    $hload = round(             $load_item[$m][$d][$h][$i]* $s);
                     if ($PV_net_out[$m][$d][$h] != 0) {
                         $loss=round($PV_usage_loss_by_item[$m][$d][$h][$i]* $s);
                         $used=round($PV_used_by_item      [$m][$d][$h][$i]* $s);

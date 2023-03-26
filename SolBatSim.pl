@@ -585,7 +585,7 @@ sub get_power {
 
         next if m/^20\d\d0229:/; # skip data of Feb 29th (in leap years)
         $start_year = $1 if (!$start_year && m/^(\d\d\d\d)/);
-        if ($tmy) {
+        if ($tmy && !$test) {
             # typical metereological year
             my $selected_month = 0;
             $selected_month = $1 if m/^2012(01)/;
@@ -608,8 +608,9 @@ sub get_power {
 
         die "Missing power data in $file line $_"
             unless m/^(\d\d\d\d)(\d\d)(\d\d):(\d\d)(\d\d),\s?([\d\.]+)/;
+        my $hour_offset = $test ? 0 : TimeZone;
         my ($year, $month, $day, $hour, $minute_unused, $power) =
-            ($tmy ? $start_year : $1, $2, $3, ($4 + TimeZone) % 24, $5, $6);
+            ($tmy ? $start_year : $1, $2, $3, ($4 + $hour_offset) % 24, $5, $6);
         # for simplicity, attributing hours wrapped via time zone to same day
         $power *= $power_rate unless $test;
         $PV_gross_out[$year - $start_year][$month][$day][$hour] += $power;
@@ -617,7 +618,7 @@ sub get_power {
         last if $test && $hours == TEST_END;
     }
     close $IN unless $test;
-    print "\n"; # close line started with print "$pv_data_txt..."
+    print "\n" unless $test; # close line started with print "$pv_data_txt..."
 
     check_consistency($years, $current_years, "years", $file) if $years;
     $years = $current_years;

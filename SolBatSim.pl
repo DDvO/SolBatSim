@@ -90,12 +90,12 @@ use warnings;
 
 die "Missing command line arguments" if $#ARGV < 0;
 my $test         = 0; # unless 0, number of test load points per hour
-my $load_profile = shift @ARGV unless $ARGV[0] =~ m/^-/; # file name
-my @load_distort = (1) x 24; # distortion factors per hour, by default none
+my @load_factors = (1) x 24; # distortion factors per hour, by default none
 my $load_const;     # constant load in W, during certain times:
 my $load_days    =  5;  # count of days per week with constant load
 my $load_from    =  8;  # hour of constant load begin
 my $load_to      = 16;  # hour of constant load end
+my $load_profile = shift @ARGV unless $ARGV[0] =~ m/^-/; # file name
 my $consumption  = shift @ARGV # kWh/year, default is implicit from load profile
     if $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/;
 
@@ -246,7 +246,7 @@ if (defined $load_factors) {
         my $val = $factors[$i];
         die "Item '$val' of -bend option argument is not a number"
             unless $val =~ m/^\s*-?[\d\.]+\s*$/ && $val ne ".";
-        $load_distort[$i] = $val;
+        $load_factors[$i] = $val;
     }
 }
 if (defined $load_const) {
@@ -408,7 +408,7 @@ sub get_profile {
             }
         } else {
             for (my $item = 0; $item < $n; $item++) {
-                my $load = $sources[$item] * $load_distort[$hour];
+                my $load = $sources[$item] * $load_factors[$hour];
                 die "Error parsing load item: '$load' in $file line $."
                     unless $load =~ m/^\s*-?[\.\d]+\s*$/;
                 if ($load > $load_max) {
@@ -483,7 +483,7 @@ my $s10   = "          ";
 my $s13   = "             ";
 print "$profile_txt$de1$s10 : $load_profile\n" unless $test;
 print "$p_txt = ".sprintf("%4d", $items_per_hour)."\n";
-print "$d_txt $de1 = @load_distort\n" if defined $load_factors;
+print "$d_txt $de1 = @load_factors\n" if defined $load_factors;
 print "$t_txt =".kWh($load_sum)."\n";
 if ($load_sum != 0) {
     if (!$test) {
@@ -1098,7 +1098,7 @@ sub save_statistics {
     print $OU "$load_const_txt in W $load_during_txt, " if defined $load_const;
     print $OU "$profile_txt, $pv_data_txt$plural_txt\n";
     print $OU "".round_1000($load_sum).", ";
-    print $OU "@load_distort, " if defined $load_factors;
+    print $OU "@load_factors, " if defined $load_factors;
     print $OU "$load_const, " if defined $load_const;
     print $OU "$load_profile, ".join(", ", @PV_files)."\n";
 

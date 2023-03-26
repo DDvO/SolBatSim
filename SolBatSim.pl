@@ -348,27 +348,45 @@ sub adjust_day_month {
 ################################################################################
 # read load profile data
 
+my $items_per_hour;
 my @items_by_hour;
 my @load_by_item;
 my @load_by_hour;
 my @load_by_weekday;
-my $hour_per_year = 0;
 sub get_profile {
+    my @lines;
+
+    my $hours = 0;
     my $file = shift;
     open(my $IN, '<', $file) or die "Could not open profile file $file: $!\n"
         unless $test;
+    while (my $line =
+           !$test ? <$IN>
+           : "date".(",".($hours < TEST_START ||
+                          ($hours % 24 >= TEST_DROP_START &&
+                           $hours % 24 <  TEST_DROP_END)
+                          ? 0 : $test_load)) x $test ."\n") {
+        chomp $line;
+        next if $line =~ m/^\s*#/; # skip comment line
+        $lines[$hours++] = $line;
+        last if $test && $hours == TEST_END;
+    }
+    close $IN unless $test;
+    my $rest = $hours % 24;
+    die "Load data in $file does not cover full day; last day has $rest hours"
+        if $hours == 0 || !$test && $rest != 0;
+    die ("Load data in $file contains too many hours: $hours rather than "
+         .YearHours." per year") if $hours > YearHours;
+    print "Warning: load data in $file covers ".($hours / 24)." day(s); ".
+        "will be repeated for the rest of the year\n"
+        if !$test && $hours != YearHours;
 
     my $warned_just_before = 0;
     my $weekday = 4; # HTW load profiles start on Friday (of 2010), Monday == 0
     my $items = 0; # number of load measure points in current hour
-    while (my $line =
-           !$test ? <$IN>
-           : "date".(",".($hour_per_year < TEST_START ||
-                          ($hour >= TEST_DROP_START && $hour <  TEST_DROP_END)
-                          ? 0 : $test_load)) x $test ."\n") {
-        chomp $line;
-        next if $line =~ m/^\s*#/; # skip comment line
-        my @sources = split ",", $line;
+    my $num_hours = $test ? TEST_END : YearHours;
+    for (my $hour_per_year = 0; $hour_per_year < $num_hours; $hour_per_year++) {
+        my @sources = split ",", $lines[$hour_per_year % $hours];
         my $n = $#sources;
         shift @sources; # ignore date & time info
         if ($items > 0 && $items != $n) {
@@ -405,7 +423,7 @@ sub get_profile {
                     $en = 1;
                     print "Warning: load on YYYY-".
                         date_string($month, $day, $hour)
-                        .sprintf("h, item %4d", $item)." = $load\n"
+                        .sprintf("h, item %4d", $item + 1)." = $load\n"
                         unless $test || $warned_just_before;
                     $en = $lang;
                     $warned_just_before = 1;
@@ -430,13 +448,8 @@ sub get_profile {
             $weekday = 0 if ++$weekday == 7;
         }
         adjust_day_month();
-        $hour_per_year++;
-        last if $test && $hour_per_year == TEST_END;
     }
-    close $IN unless $test;
-    $month--;
-    check_consistency($month, 12, "months", $file);
-    check_consistency($hour_per_year, YearHours, "hours", $file);
+    $items_per_hour = $sum_items / $num_hours;
 }
 
 get_profile($load_profile);
@@ -469,7 +482,7 @@ my $de3 = $en ? ""    : "   ";
 my $s10   = "          "; 
 my $s13   = "             ";
 print "$profile_txt$de1$s10 : $load_profile\n" unless $test;
-print "$p_txt = ".sprintf("%4d", $sum_items / $hour_per_year)."\n";
+print "$p_txt = ".sprintf("%4d", $items_per_hour)."\n";
 print "$d_txt $de1 = @load_distort\n" if defined $load_factors;
 print "$t_txt =".kWh($load_sum)."\n";
 if ($load_sum != 0) {
@@ -1219,7 +1232,7 @@ sub save_statistics {
     close $OU;
 }
 
-my $max_txt = $sum_items / $hour_per_year == 60
+my $max_txt = $items_per_hour == 60
              ? ($en ? "minute" : "Minute")
              : ($en ? "point in time" : "Zeitpunkt");
 my $hour_txt  = $en ? "hour"   : "Stunde";

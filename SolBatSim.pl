@@ -352,6 +352,7 @@ my $items_per_hour;
 my @items_by_hour;
 my @load_item;
 my @load;
+my @load_by_hour;
 my @load_by_weekday;
 sub get_profile {
     my @lines;
@@ -434,6 +435,7 @@ sub get_profile {
             $hload /= $n;
         }
         $load[$month][$day][$hour] += $hload;
+        $load_by_hour   [$hour   ] += $hload;
         $load_by_weekday[$weekday] += $hload;
         $load_sum    += $hload;
         $night_sum   += $hload if   NIGHT_START <= $hour && $hour <   NIGHT_END;
@@ -453,6 +455,13 @@ sub get_profile {
 }
 
 get_profile($load_profile);
+my $load_scale = defined $consumption && $load_sum != 0
+    ? 1000 * $consumption / $load_sum : 1;
+my $load_scale_never_0 = $load_scale != 0 ? $load_scale : 1;
+my $n_days = $test ? TEST_LENGTH / 24 : 365;
+for (my $hour = 0; $hour < 24; $hour++) {
+    $load_by_hour[$hour] = round($load_by_hour[$hour] * $load_scale / $n_days);
+}
 
 my $profile_txt = $en ? "load profile file"     : "Lastprofil-Datei";
 my $pv_data_txt = $en ? "PV data file"          : "PV-Daten-Datei";
@@ -461,6 +470,7 @@ my $slope_txt   = $en ? "slope"                 : "Neigungswinkel";
 my $azimuth_txt = $en ? "azimuth"               : "Azimut";
 my $p_txt = $en ? "load data points per hour  " : "Last-Datenpunkte pro Stunde";
 my $d_txt = $en ? "load distortions each hour"  : "Last-Verzerrung je Stunde";
+my $l_txt = $en ? "average load/day each hour"  : "Mittlere Last/Tag je Stunde";
 my $t_txt = $en ? "total cons. acc. to profile" : "Verbrauch gemäß Lastprofil ";
 my $W_txt = $en ? "portion per weekday (Mo-Su)" :"Anteil pro Wochentag (Mo-So)";
 my $n_txt = $en ? "portion 12 AM -  6 AM      " : "Anteil  0 -  6 Uhr MEZ     ";
@@ -481,11 +491,20 @@ my $de2 = $en ? ""    : "  ";
 my $de3 = $en ? ""    : "   ";
 my $s10   = "          "; 
 my $s13   = "             ";
+my $lhs_spaces = " " x length("$W_txt$en1");
 print "$profile_txt$de1$s10 : $load_profile\n" unless $test;
 print "$p_txt = ".sprintf("%4d", $items_per_hour)."\n";
-print "$d_txt $de1 = @load_factors\n" if defined $load_factors;
 print "$t_txt =".kWh($load_sum)."\n";
+print "$d_txt $de1 = @load_factors\n" if defined $load_factors;
+print "$l_txt $en1= @load_by_hour[ 0..11]\n"
+      ."$lhs_spaces  @load_by_hour[12..23]\n";
 if ($load_sum != 0) {
+    print "$n_txt =   ".percent($night_sum   / $load_sum)." %\n";
+    print "$m_txt =   ".percent($morning_sum / $load_sum)." %\n";
+    print "$s_txt =   ".percent($bright_sum  / $load_sum)." %\n";
+    print "$a_txt =   ".percent($earleve_sum / $load_sum)." %\n";
+    print "$e_txt =   ".percent($evening_sum / $load_sum)." %\n";
+    print "$w_txt =   ".percent($winter_sum  / $load_sum)." %\n" unless $test;
     if (!$test) {
         print "$W_txt$en1=   ";
         for (my $weekday = 0; $weekday < 7; $weekday++) {
@@ -494,15 +513,8 @@ if ($load_sum != 0) {
         }
     }
     print "\n";
-    print "$n_txt =   ".percent($night_sum   / $load_sum)." %\n";
-    print "$m_txt =   ".percent($morning_sum / $load_sum)." %\n";
-    print "$s_txt =   ".percent($bright_sum  / $load_sum)." %\n";
-    print "$a_txt =   ".percent($earleve_sum / $load_sum)." %\n";
-    print "$e_txt =   ".percent($evening_sum / $load_sum)." %\n";
-    print "$w_txt =   ".percent($winter_sum  / $load_sum)." %\n" unless $test;
 }
-print "$b_txt =".W($night_sum / ($test ? TEST_LENGTH / 24 : 365)
-                   / (NIGHT_END - NIGHT_START))."\n";
+print "$b_txt =".W($night_sum / $n_days / (NIGHT_END - NIGHT_START))."\n";
 print "$M_txt =".W($load_max)." $on $load_max_time\n";
 print "\n";
 
@@ -510,6 +522,7 @@ print "\n";
 # read PV production data
 
 my @PV_gross_out;
+my @PV_gross_out_by_hour;
 my ($start_year, $years);
 my $garbled_hours = 0;
 sub get_power {
@@ -614,6 +627,7 @@ sub get_power {
         # for simplicity, attributing hours wrapped via time zone to same day
         $power *= $power_rate unless $test;
         $PV_gross_out[$year - $start_year][$month][$day][$hour] += $power;
+        $PV_gross_out_by_hour[$hour] += $power;
         $hours++;
         last if $test && $hours == TEST_END;
     }
@@ -649,6 +663,13 @@ for (my $i = 0; $i <= $#PV_files; $i++) {
     $PV_peaks[$i] = get_power($PV_files[$i], $PV_peaks[$i]);
 }
 my $PV_peaks = join("+", @PV_peaks);
+for (my $hour = 0; $hour < 24; $hour++) {
+    $PV_gross_out_by_hour[$hour] =
+        round($PV_gross_out_by_hour[$hour] / $n_days / $years);
+}
+my $P_txt = $en ? "avg PV power/day each hour" : "Mittl. PV-Leist./Tag je Std";
+print "$P_txt $en1= @PV_gross_out_by_hour[ 0..11]\n"
+        ."$lhs_spaces  @PV_gross_out_by_hour[12..23]\n";
 
 ################################################################################
 # PV usage simulation
@@ -660,9 +681,6 @@ my @PV_net_out;
 my $PV_net_out_sum = 0;
 my $PV_net_bright_sum = 0;
 
-my $load_scale = defined $consumption && $load_sum != 0
-    ? 1000 * $consumption / $load_sum : 1;
-my $load_scale_never_0 = $load_scale != 0 ? $load_scale : 1;
 my @PV_net_loss;
 my $PV_net_losses = 0;
 my $PV_net_loss_hours = 0;
@@ -1094,21 +1112,21 @@ sub save_statistics {
 
     my $nominal_sum = $#PV_peaks == 0 ? $PV_peaks[0] : "=$PV_peaks";
     print $OU "$consumpt_txt in kWh, ";
-    print $OU "$d_txt, " if defined $load_factors;
     print $OU "$load_const_txt in W $load_during_txt, " if defined $load_const;
     print $OU "$profile_txt, $pv_data_txt$plural_txt\n";
     print $OU "".round_1000($load_sum).", ";
-    print $OU "@load_factors, " if defined $load_factors;
     print $OU "$load_const, " if defined $load_const;
     print $OU "$load_profile, ".join(", ", @PV_files)."\n";
 
     print $OU " $nominal_txt in Wp".($date ? " $only $during $date" : "")
         .", $max_gross_txt in W, "
         ."$curb_txt in W, $system_eff_txt in %, $ieff_txt in %, "
-        ."$own_ratio_txt in %, $load_cover_txt in %\n";
-    print $OU "$nominal_sum, ".round($PV_gross_max).", "
+        ."$own_ratio_txt in %, $load_cover_txt in %,";
+    print $OU "$d_txt:, ".join(", ",@load_factors) if defined $load_factors;
+    print $OU "\n$nominal_sum, ".round($PV_gross_max).", "
         .($curb ? $curb : $en ? "none" : "keine").
-        ", $pvsys_eff, $inverter_eff, $own_usage, $load_coverage\n";
+        ", $pvsys_eff, $inverter_eff, $own_usage, $load_coverage, ";
+    print $OU "$l_txt in W:, ".join(", ", @load_by_hour)."\n";
 
     print $OU "$capacity_txt in Wh, "
         .(defined $bypass ? "$bypass_txt in W$spill_txt" : $optimal_charge).", "
@@ -1131,7 +1149,8 @@ sub save_statistics {
     print $OU "$yearly_txt, $PV_gross_txt, "
         .($curb ? "$PV_loss_txt $by_curb, " : "")."$PV_net_txt, "
         .($curb ? "$usage_loss_txt$net_de $by_curb, ": "")
-        ."$own_txt$opt_with_curb, $grid_feed_txt\n";
+        ."$own_txt$opt_with_curb, $grid_feed_txt, ";
+    print $OU "$P_txt in W:, ".join(", ", @PV_gross_out_by_hour)."\n";
     print $OU "$sum_txt, ".
         round_1000($PV_gross_out_sum ).", ".
         ($curb ? round_1000($PV_net_losses  ).", " : "").

@@ -514,8 +514,9 @@ if ($load_sum != 0) {
     }
     print "\n";
 }
-print "$b_txt =".W($night_sum / $n_days / (NIGHT_END - NIGHT_START))."\n";
-print "$M_txt =".W($load_max)." $on $load_max_time\n";
+print "$b_txt =".W($night_sum * $load_scale / (NIGHT_END - NIGHT_START)
+                   / $n_days)."\n";
+print "$M_txt =".W($load_max * $load_scale)." $on $load_max_time\n";
 print "\n";
 
 ################################################################################

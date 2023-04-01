@@ -398,25 +398,49 @@ sub get_profile {
 
     my $hours = 0;
     my $file = shift;
-    open(my $IN, '<', $file) or die "Could not open profile file $file: $!\n"
-        unless $test;
-    while (my $line =
-           !$test ? <$IN>
-           : "date".(",".($hours < TEST_START ||
-                          ($hours % 24 >= TEST_DROP_START &&
-                           $hours % 24 <  TEST_DROP_END)
-                          ? 0 : $test_load)) x $test ."\n") {
-        chomp $line;
-        next if $line =~ m/^\s*#/; # skip comment line
-        $lines[$hours++] = $line;
-        last if $test && $hours == TEST_END;
+    if ($test) {
+        while ($hours < TEST_END) {
+            my $load = $hours < TEST_START ||
+                ($hours % 24 >= TEST_DROP_START &&
+                 $hours % 24 <  TEST_DROP_END)
+                ? 0 : $test_load;
+            my $line = "date".(",$load") x $test;
+            $lines[$hours++] = $line;
+        }
+    } else {
+        open(my $IN, '<', $file)
+            or die "Could not open profile file $file: $!\n";
+        while (my $line = <$IN>) {
+            chomp $line;
+            next if $line =~ m/^\s*#/; # skip comment line
+            $lines[$hours++] = $line;
+        }
+        close $IN unless $test;
+
+        if ($hours > YearHours) {
+            # handle multiple lines per hour, assuming load in 2nd column
+            die ("Load data in $file contains $hours data lines, ".
+                 "not a multiple of ".YearHours." hours per year")
+                if $hours % YearHours != 0;
+            my $items = $hours / YearHours;
+            for (my $hour = 0; $hour < YearHours; $hour++) {
+                my $line;
+                # my $load = 0;
+                for (my $j = 0; $j < $items; $j++) {
+                    my @sources = split ",", $lines[$items * $hour + $j];
+                    $line = $sources[0] if $j == 0;
+                    $line .= ",$sources[1]";
+                    # $load += $sources[1];
+                }
+                # $line .= ",$load";
+                $lines[$hour] = $line;
+            }
+            $hours = YearHours;
+        }
     }
-    close $IN unless $test;
     my $rest = $hours % 24;
     die "Load data in $file does not cover full day; last day has $rest hours"
         if $hours == 0 || !$test && $rest != 0;
-    die ("Load data in $file contains too many hours: $hours rather than "
-         .YearHours." per year") if $hours > YearHours;
     print "Warning: load data in $file covers ".($hours / 24)." day(s); ".
         "will be repeated for the rest of the year\n"
         if !$test && $hours != YearHours;

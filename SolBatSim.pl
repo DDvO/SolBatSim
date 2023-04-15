@@ -488,8 +488,8 @@ sub get_profile {
         my $hload = 0;
         for (my $item = 0; $item < $n; $item++) {
             my $load = $sources[$item];
-            die "Error parsing load item: '$load' in $file line $."
-                unless $load =~ m/^\s*-?[\.\d]+\s*$/;
+            die "Error parsing load item: '$load' in $file hour $hour_per_year"
+                unless $load =~ m/^\s*-?\d+(\.\d+)?\s*$/;
             $hload += $load;
             $load_item[$month][$day][$hour][$item] = $load;
             if ($load <= 0) {
@@ -586,9 +586,11 @@ my $d_txt = $en ? "load distortions each hour"  : "Last-Verzerrung je Stunde";
 my $l_txt = $en ? "average load/day each hour"  : "Mittlere Last/Tag je Stunde";
 my $t_txt = $en ? "total cons. acc. to profile" : "Verbrauch gemäß Lastprofil ";
 my $consumpt_txt= $en ? "consumption by household" : "Verbrauch durch Haushalt";
-my $L_txt = $en ? "load portion per 3 hours"    : "Last-Anteil pro 3 Stunden";
+my $L_txt = $en ? "load portion"                : "Last-Anteil";
+my $V_txt = $en ? "PV portion"                  : "PV-Anteil";
+my $per3  = $en ? "per 3 hours"                 : "pro 3 Stunden";
+my $per_m = $en ? "per month"                   : "pro Monat";
 my $W_txt = $en ? "portion per weekday (Mo-Su)" :"Anteil pro Wochentag (Mo-So)";
-my $m_txt = $en ? "load portion per month"      : "Last-Anteil pro Monat";
 my $b_txt = $en ? "basic load                 " : "Grundlast                  ";
 my $M_txt = $en ? "maximal load               " : "Maximallast                ";
 my $on    = $en ? "on" : "am";
@@ -614,9 +616,9 @@ print "$D_txt $en1= @load_dist[ 0..11]\n"
 print "$d_txt $de1 = @load_factors\n" if defined $load_factors;
 print "$l_txt $en1= @load_per_hour[ 0..11]\n"
       ."$lhs_spaces  @load_per_hour[12..23]\n";
-    print_arr_perc("$L_txt$en1   = "   , \@load_by_hour  , $load_sum, 0, 21, 3);
+    print_arr_perc("$L_txt $per3 $en1  = ", \@load_by_hour,$load_sum, 0, 21, 3);
 if (!$test) {
-    print_arr_perc("$m_txt$de1      = ", \@load_by_month , $load_sum, 1, 12, 1);
+   print_arr_perc("$L_txt $per_m $de1     = ",\@load_by_month,$load_sum,1,12,1);
     print_arr_perc("$W_txt$en1= "      , \@load_by_weekday,$load_sum, 0,  6, 1);
 }
 print "\n";
@@ -740,7 +742,7 @@ sub get_power {
         $PV_gross_out_sum += $power;
         if ($power > $PV_gross_max) {
             $PV_gross_max = $power;
-            $PV_gross_max_tm = ($tmy ? "TMY" : $start_year + $year)."-"
+            $PV_gross_max_tm = ($tmy ? "TMY" : $year)."-"
                 .time_string($month, $day, $hour, $minute);
         }
         $hours++;
@@ -1386,9 +1388,9 @@ print "$max_gross_txt $en4     =".W($PV_gross_max)." $on $PV_gross_max_tm\n";
 print "$PV_gross_txt $en1            =".kWh($PV_gross_out_sum)."\n";
 print "$P_txt $en1= @PV_gross_out_per_hour[ 0..11]\n"
         ."$lhs_spaces  @PV_gross_out_per_hour[12..23]\n";
-print_arr_perc("$L_txt$en1   = ", \@PV_gross_out_by_hour,
+print_arr_perc("$V_txt $per3$en1     = ", \@PV_gross_out_by_hour,
                $PV_gross_out_sum * $years, 0, 21, 3);
-print_arr_perc("$m_txt$de1      = ", \@PV_gross_out_by_month,
+print_arr_perc("$V_txt $per_m$de1        = ", \@PV_gross_out_by_month,
                $PV_gross_out_sum * $years, 1, 12, 1) unless $test;
 print "\n";
 print "$PV_net_txt $en2             =" .kWh($PV_net_out_sum).

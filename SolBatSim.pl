@@ -102,6 +102,7 @@ my $load_const;         # constant load in W, during certain times as follows:
 my $load_days    =  5;  # count of days per week with constant load
 my $load_from    =  8;  # hour of constant load begin
 my $load_to      = 16;  # hour of constant load end
+my $first_weekday = 4;  # HTW load profiles start on Friday in 2010, Monday == 0
 
 use constant YearHours => 24 * 365;
 use constant TimeZone => 1; # CET/MEZ
@@ -416,8 +417,31 @@ sub get_profile {
             $lines[$hours++] = $line;
         }
         close $IN unless $test;
+        # by default, assuming one line per hour
 
-        if ($hours > YearHours) {
+        if ($hours == 365) {
+            # handle one line per day, as for German BDEW profiles
+            $first_weekday = 2; # Wednesday (1 Jan 1997), but will be
+            # adapted by 1 after 31 May 1997, where date switches to 1 Jun 1996
+            my $items = $lines[0] =~ tr/,//;
+            die ("Load data in $file contains $items data items in 1st line, ".
+                 "not a multiple of 24 hours per day")
+                if $items % 24 != 0;
+            $items /= 24;
+            my $hour24 = 23;
+            for (my $hour = YearHours - 1; $hour >= 0; $hour--) {
+                my $line;
+                for (my $j = 0; $j < $items; $j++) {
+                    my @sources = split ",", $lines[int($hour / 24)];
+                    $line = "$sources[0]:$hour24" if $j == 0;
+                    $line .= ",".$sources[$items * $hour24 + $j + 1];
+                }
+                $lines[$hour] = $line;
+                $hour24 = 23 if --$hour24 < 0;
+            }
+            $hours = YearHours;
+
+        } elsif ($hours > YearHours) {
             # handle multiple lines per hour, assuming load in 2nd column
             die ("Load data in $file contains $hours data lines, ".
                  "not a multiple of ".YearHours." hours per year")
@@ -446,7 +470,7 @@ sub get_profile {
         if !$test && $hours != YearHours;
 
     my $warned_just_before = 0;
-    my $weekday = 4; # HTW load profiles start on Friday (of 2010), Monday == 0
+    my $weekday = $first_weekday;
     my $items = 0; # number of load measure points in current hour
     my $day_load = 0;
     my $num_hours = $test ? TEST_END : YearHours;
@@ -530,7 +554,12 @@ sub get_profile {
             }
             $day_load = 0;
             $hour = 0;
-            $weekday = 0 if ++$weekday == 7;
+            if ($first_weekday==2 && $lines[$hour_per_year] =~ m/^31.05.1997/) {
+                # BDEW stay on Sat when switching from 31 May 1997 to 1 Jan 1996
+                print "Info: assuming $file is a BDEW load profile\n";
+            } else {
+                $weekday = 0 if ++$weekday == 7;
+            }
         }
         adjust_day_month();
     }

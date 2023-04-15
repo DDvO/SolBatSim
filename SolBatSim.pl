@@ -159,6 +159,7 @@ sub str_arg {
 sub array_arg {
     my $opt = shift;
     my $arg = shift; # may be undefined
+    $arg =~ tr/ /,/ if defined $arg;
     my $min = shift;
     my $max = shift;
     my $default = shift;

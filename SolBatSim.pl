@@ -11,6 +11,7 @@
 #            [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>
 #            [-load <konstante Last in W> [<Zahl der Tage pro Woche, sonst 5>:
 #                   <von Uhrzeit, sonst 8 Uhr>..<bis Uhrzeit, sonst 16 Uhr>]]
+#            [-avg_hour]
 #            [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
 #            [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>]
 #            [-ac] {AC-gekoppelter Speicher, ohne Verlust durch Überlauf}
@@ -54,6 +55,7 @@
 #          [-bend <load distort factors for hour 0,..,23 each day, default 1>
 #          [-load <constant load in W> [<count of days per week, default 5>:
 #                 <from hour, default 8 o'clock>..<to hour, default 16>]]
+#          [-avg_hour]
 #          [-peff <PV system efficiency in %, default from PV data file(s)>]
 #          [-capacity <storage capacity in Wh, default 0 (no battery)>]
 #          [-ac] {AC-coupled charging after inverter, without loss by spill}
@@ -99,6 +101,7 @@ my $consumption  = shift @ARGV # kWh/year, default is implicit from load profile
 my @load_dist;          # if set, relative load distribution per hour each day
 my @load_factors;       # load distortion factors per hour, on top of @load_dist
 my $load_const;         # constant load in W, during certain times as follows:
+my $avg_hour      = 0;  # use only the average of load items per hour
 my $load_days    =  5;  # count of days per week with constant load
 my $load_from    =  8;  # hour of constant load begin
 my $load_to      = 16;  # hour of constant load end
@@ -205,6 +208,7 @@ while ($#ARGV >= 0) {
                                            = ($1, $2, $3) if $#ARGV >= 0 &&
                                            $ARGV[0] =~ m/^(\d+):(\d+)\.\.(\d+)$/
                                            && shift @ARGV;
+    } elsif ($ARGV[0] eq "-avg_hour") { $avg_hour     = no_arg();
     } elsif ($ARGV[0] eq "-peff"    ) { $pvsys_eff    = eff_arg();
     } elsif ($ARGV[0] eq "-tmy"     ) { $tmy          =  no_arg();
     } elsif ($ARGV[0] eq "-curb"    ) { $curb         = num_arg();
@@ -387,6 +391,15 @@ sub adjust_day_month {
 ################################################################################
 # read load profile data
 
+sub max_load {
+    my ($load, $month, $day, $hour, $min) = (shift, shift, shift, shift, shift);
+    if ($load > $load_max) {
+        $load_max = $load;
+        $load_max_time = time_string($month, $day, $hour, $min);
+    }
+}
+
+
 my $items_per_hour;
 my @items_by_hour;
 my @load_item;
@@ -517,16 +530,15 @@ sub get_profile {
                 $test && $hour_per_year == $num_hours - 1 ? TEST_END % 24 : 24;
             for ($hour = 0; $hour < $hour_end; $hour++) {
                 $hload = $load[$month][$day][$hour];
-                if (defined $load_const && $weekday < $load_days &&
-                    ($load_from > $load_to
-                     ? ($load_from <= $hour || $hour < $load_to)
-                     : ($load_from <= $hour && $hour < $load_to))) {
+                if ((defined $load_const && $weekday < $load_days &&
+                     ($load_from > $load_to
+                      ? ($load_from <= $hour || $hour < $load_to)
+                      : ($load_from <= $hour && $hour < $load_to)))
+                    || $avg_hour) {
                     $items_by_hour[$month][$day][$hour] = 1;
-                    $load_item[$month][$day][$hour][0] = $hload = $load_const;
-                    if ($hload > $load_max) {
-                        $load_max = $hload;
-                        $load_max_time = time_string($month, $day, $hour, 0);
-                    }
+                    $hload = $load_const if defined $load_const;
+                    $load_item[$month][$day][$hour][0] = $hload;
+                    max_load($hload, $month, $day, $hour, 0);
                 } else {
                     my $orig_hload = $hload;
                     $hload = $load[$month][$day][$hour] = $load_factors[$hour] *
@@ -539,11 +551,7 @@ sub get_profile {
                         $load *= $hload / $orig_hload
                             if defined $load_dist && $orig_hload != 0;
                         $load_item[$month][$day][$hour][$item] = $load;
-                        if ($load > $load_max) {
-                            $load_max = $load;
-                            $load_max_time = time_string($month, $day, $hour,
-                                                         60 * $item / $n);
-                        }
+                        max_load($load, $month, $day, $hour, 60 * $item / $n);
                     }
                 }
                 $load_by_hour   [$hour   ] += $hload;

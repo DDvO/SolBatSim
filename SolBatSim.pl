@@ -5,7 +5,7 @@
 # und optional mit Stromspeicher (Batterie o.ä.)
 #
 # Nutzung: Solar.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
-#            (<PV-Daten-Datei> [<Brutto-Nennleistung in Wp>])+
+#            (<PV-Daten-Datei> [<Brutto-Nennleistung in Wp> [<Limit in W>]])+
 #            [-date <Jahr>[-<Monat>[-<Tag>[:<Stunde>]]]]
 #            [-dist <relative Lastverteilung über den Tag pro Stunde 0,..,23>
 #            [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>
@@ -49,7 +49,7 @@
 # Optionally with energy storage (using a battery or the like).
 #
 # Usage: Solar.pl <load profile file> [<consumption per year in kWh>]
-#          (<PV data file> [<nominal gross power in Wp>])+
+#          (<PV data file> [<nominal gross power in Wp> [<limit in W]])+
 #          [-date <year>[-<month>[-<day>[:<hour]]]]
 #          [-dist <relative load distribution over each day, per hour 0,..,23>
 #          [-bend <load distort factors for hour 0,..,23 each day, default 1>
@@ -112,6 +112,7 @@ use constant TimeZone => 1; # CET/MEZ
 
 my @PV_files;
 my @PV_peaks;       # nominal/maximal PV output(s), default from PV data file(s)
+my @PV_limit;       # power limit of PV output(s), default 0 (none)
 my ($lat, $lon);    # from PV data file(s)
 my $pvsys_eff;      # PV system efficiency, default from PV data file(s)
 my $inverter_eff;   # inverter efficiency; default see below
@@ -131,6 +132,7 @@ my $nominal_power_sum = 0;
 while ($#ARGV >= 0 && $ARGV[0] =~ m/^\s*[^-]/) {
     push @PV_files, shift @ARGV; # PV data file
     push @PV_peaks, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : 0;
+    push @PV_limit, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : 0;
 }
 
 sub no_arg {
@@ -247,7 +249,8 @@ use constant TEST_DROP_END   => TEST_DROP_START + TEST_DROP_LEN;
 use constant TEST_PV_START   =>  7; # start hour of PV yield
 use constant TEST_PV_END     => 17; # end   hour of PV yield
 use constant TEST_PV_GROSS   => 1100; # in Wp
-use constant TEST_LOAD       => 900; # in W
+use constant TEST_PV_LIMIT   =>    0; # in W
+use constant TEST_LOAD       =>  900; # in W
 use constant TEST_LOAD_LEN   =>
     TEST_END > TEST_DROP_END ? TEST_LENGTH - TEST_DROP_LEN
     : (TEST_END <= TEST_DROP_START ? TEST_END - TEST_START
@@ -257,6 +260,7 @@ my $test_load = defined $consumption ?
 if ($test) {
     $load_profile  = "test load data";
     my $pv_gross   = $#PV_peaks < 0 ? TEST_PV_GROSS : $PV_peaks[0]; # in W
+    my $pv_limit   = $#PV_limit < 0 ? TEST_PV_LIMIT : $PV_limit[0]; # in W
     my $pv_power   = defined $pvsys_eff ? $pv_gross * $pvsys_eff :
         sprintf("%.0e", $pv_gross); # in W
     # after PV system losses, which may be derived as follows:
@@ -266,6 +270,7 @@ if ($test) {
     $consumption = $test_load/1000 * TEST_LOAD_LEN unless defined $consumption;
     push @PV_files, "test PV data" if $#PV_files < 0;
     push @PV_peaks, $pv_gross      if $#PV_peaks < 0;
+    push @PV_limit, $pv_limit      if $#PV_limit < 0;
     $charge_eff    =  0.9 if defined $capacity && !defined $charge_eff;
     my $pv_net_bat =  600; # in W, after inverter losses
     $storage_eff   =  $pv_net_bat / ($pv_power * $charge_eff * $inverter_eff)
@@ -587,6 +592,7 @@ for (my $hour = 0; $hour < 24; $hour++) {
 my $profile_txt = $en ? "load profile file"     : "Lastprofil-Datei";
 my $pv_data_txt = $en ? "PV data file"          : "PV-Daten-Datei";
 my $plural_txt  = $en ? "(s)"                   : "(en)";
+my $limits_txt  = $en ? "limit (0 = none)"      : "Begrenzung (0 = keine)";
 my $slope_txt   = $en ? "slope"                 : "Neigungswinkel";
 my $azimuth_txt = $en ? "azimuth"               : "Azimut";
 my $p_txt = $en ? "load data points per hour  " : "Last-Datenpunkte pro Stunde";
@@ -645,7 +651,7 @@ my $PV_gross_max_tm;
 my ($start_year, $years);
 my $garbled_hours = 0;
 sub get_power {
-    my ($file, $nominal_power) = (shift, shift);
+    my ($file, $nominal_power, $limit) = (shift, shift, shift);
     open(my $IN, '<', $file) or die "Could not open PV data file $file: $!\n"
         unless $test;
     print "$pv_data_txt$s13 : $file" unless $test;
@@ -745,6 +751,7 @@ sub get_power {
             ($tmy ? $start_year : $1, $2, $3, ($4 + $hour_offset) % 24, $5, $6);
         # for simplicity, attributing hours wrapped via time zone to same day
         $power *= $power_rate unless $test;
+        $power = $limit if $limit != 0 && $power > $limit;
         $PV_gross_out[$year - $start_year][$month][$day][$hour] += $power;
         $PV_gross_out_by_hour[$hour] += $power;
         $PV_gross_out_by_month[$month] += $power;
@@ -785,10 +792,13 @@ sub get_power {
     return $nominal_power;
 }
 
+my $total_limit = 0;
 for (my $i = 0; $i <= $#PV_files; $i++) {
-    $PV_peaks[$i] = get_power($PV_files[$i], $PV_peaks[$i]);
+    $total_limit += $PV_limit[$i];
+    $PV_peaks[$i] = get_power($PV_files[$i], $PV_peaks[$i], $PV_limit[$i]);
 }
 my $PV_peaks = join("+", @PV_peaks);
+my $PV_limit = join("+", @PV_limit);
 for (my $hour = 0; $hour < 24; $hour++) {
     $PV_gross_out_per_hour[$hour] =
         round($PV_gross_out_by_hour[$hour] / $n_days / $years);
@@ -1218,6 +1228,7 @@ sub save_statistics {
     open(my $OU, '>',$file) or die "Could not open statistics file $file: $!\n";
 
     my $nominal_sum = $#PV_peaks == 0 ? $PV_peaks[0] : "=$PV_peaks";
+    my $limits_sum  = $#PV_limit == 0 ? $PV_limit[0] : "=$PV_limit";
     print $OU "$consumpt_txt in kWh,";
     print $OU "$load_const_txt in W $load_during_txt," if defined $load_const;
     print $OU "$profile_txt,$pv_data_txt$plural_txt\n";
@@ -1225,12 +1236,12 @@ sub save_statistics {
     print $OU "$load_const," if defined $load_const;
     print $OU "$load_profile,".join(",", @PV_files)."\n";
 
-    print $OU " $nominal_txt in Wp".($date ? " $only $during $date" : "")
-        .",$max_gross_txt in W,"
+    print $OU "$nominal_txt in Wp,$limits_txt in W"
+        .($date ? " $only $during $date" : "").",$max_gross_txt in W,"
         ."$curb_txt in W,$system_eff_txt in %,$ieff_txt in %,"
         ."$own_ratio_txt in %,$load_cover_txt in %,";
     print $OU ",$D_txt:,".join(",", @load_dist) if defined $load_dist;
-    print $OU "\n$nominal_sum,".round($PV_gross_max).","
+    print $OU "\n$nominal_sum,$limits_sum,".round($PV_gross_max).","
         .($curb ? $curb : $en ? "none" : "keine").
         ",$pvsys_eff,$inverter_eff,$own_usage,$load_coverage,";
     print $OU ",$d_txt:,".join(",", @load_factors) if defined $load_factors;
@@ -1391,8 +1402,9 @@ if (!$test) {
     print "\n";
 }
 my $nominal_sum = $#PV_peaks == 0 ? "" : " = $PV_peaks Wp";
+my $limits_sum = $total_limit == 0 ? "" : " $limits_txt: ".$PV_limit;
 print "$nominal_txt $en2         =" .W($nominal_power_sum)."p$nominal_sum".
-    ($date ? " $only $during $date" : "")."\n";
+    $limits_sum.($date ? " $only $during $date" : "")."\n";
 print "$max_gross_txt $en4     =".W($PV_gross_max)." $on $PV_gross_max_tm\n";
 print "$PV_gross_txt $en1            =".kWh($PV_gross_out_sum)."\n";
 print "$P_txt $en1= @PV_gross_out_per_hour[ 0..11]\n"

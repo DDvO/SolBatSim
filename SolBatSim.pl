@@ -440,8 +440,6 @@ sub get_profile {
 
         if ($hours == 365) {
             # handle one line per day, as for German BDEW profiles
-            $first_weekday = 2; # Wednesday (1 Jan 1997), but will be
-            # adapted by 1 after 31 May 1997, where date switches to 1 Jun 1996
             my $items = $lines[0] =~ tr/,//;
             die ("Load data in $file contains $items data items in 1st line, ".
                  "not a multiple of 24 hours per day")
@@ -480,7 +478,16 @@ sub get_profile {
             }
             $hours = YearHours;
         }
+        my $first_date = (split ",", $lines[0])[0];
+        if ($first_date =~ /(19\d\d)/ || $first_date =~ /(20\d\d)/) {
+            my $leap_years = $1 == 1900 ? 0 : int(($1 - 1901) / 4);
+            $first_weekday = ($1 - 1900 + $leap_years) % 7;
+        } else {
+            print "Warning: cannot find year in load profile $file; ".
+                "assuming that Jan 1st is a Friday (as for 2010)\n";
+        }
     }
+
     my $rest = $hours % 24;
     die "Load data in $file does not cover full day; last day has $rest hours"
         if $hours == 0 || !$test && $rest != 0;
@@ -569,8 +576,8 @@ sub get_profile {
             $day_load = 0;
             $hour = 0;
             if ($first_weekday==2 && $lines[$hour_per_year] =~ m/^31.05.1997/) {
-                # BDEW stay on Sat when switching from 31 May 1997 to 1 Jan 1996
-                print "Info: assuming $file is a BDEW load profile\n";
+                print "Warning: assuming $file is a BDEW profile of 1996..97\n";
+                # staying on Sat when switching from 31 May 1997 to 1 Jan 1996
             } else {
                 $weekday = 0 if ++$weekday == 7;
             }

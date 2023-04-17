@@ -856,8 +856,6 @@ sub simulate()
     }
     while ($year < $end_year) {
         $PV_net_loss  [$month][$day][$hour] = 0;
-        $PV_net_out   [$month][$day][$hour] = 0;
-        $PV_used      [$month][$day][$hour] = 0;
         $PV_usage_loss[$month][$day][$hour] = 0;
         if ((defined $sel_month) && $sel_month ne "*" && $month != $sel_month ||
             (defined $sel_day  ) && $sel_day   ne "*" && $day   != $sel_day ||
@@ -1171,7 +1169,9 @@ my $opt_with_curb    = ($curb ? " $with_curb" : "");
 my $grid_feed_txt    = $en ? "grid feed-in"         : "Netzeinspeisung";
 my $sum_txt          = $en ? "sums"                 : "Summen";
 my $each             = $en ? "each"                 : "alle";
-my $yearly_txt       = $en ? "yearly"               : "jährlich";
+my $yearly_txt       = $en ? "over the year"        : "übers Jahr";
+my $on_average_txt   = $en ? "on average over $years years"
+                           : "im Durchschnitt über $years Jahre";
 my $capacity_txt     = $en ? "storage capacity"     : "Speicherkapazität";
 my $coupled_txt = ($AC_coupled ? "AC" : "DC").($en ? " coupled": "-gekoppelt");
 my $optimal_charge   = $en ? "optimal charging strategy (power not consumed)"
@@ -1244,7 +1244,8 @@ sub save_statistics {
     print $OU "$load_profile,".join(",", @PV_files)."\n";
 
     print $OU "$nominal_txt in Wp,$limits_txt in W"
-        .($date ? " $only $during $date" : "").",$max_gross_txt in W,"
+        .($date ? " $only $during $date" : "")
+        .",$max_gross_txt in W $on $PV_gross_max_tm,"
         ."$curb_txt in W,$system_eff_txt in %,$ieff_txt in %,"
         ."$own_ratio_txt in %,$load_cover_txt in %,";
     print $OU ",$D_txt:,".join(",", @load_dist) if defined $load_dist;
@@ -1272,12 +1273,13 @@ sub save_statistics {
         .round_1000($PV_used_via_storage).",".round_1000($charge_sum)
         .",$cycles\n" if defined $capacity;
 
+    my $sum_avg = $sum_txt . ($years > 1 ? " $on_average_txt" : "");
     print $OU "$yearly_txt,$PV_gross_txt,"
         .($curb ? "$PV_loss_txt $by_curb," : "")."$PV_net_txt,"
         .($curb ? "$usage_loss_txt$net_de $by_curb,": "")
         ."$own_txt$opt_with_curb,$grid_feed_txt,";
     print $OU ",$l_txt in W:,".join(",", @load_per_hour)."\n";
-    print $OU "$sum_txt,".
+    print $OU "$sum_avg,".
         round_1000($PV_gross_out_sum ).",".
         ($curb ? round_1000($PV_net_losses  )."," : "").
         round_1000($PV_net_out_sum   ).",".
@@ -1289,7 +1291,7 @@ sub save_statistics {
     my $i = 10 + (defined $capacity ? 2 : 0);
     my $j = $i - 1 + ($max ? $sum_items : $hourly ? YearHours
         : $daily ? 365 : $weekly ? 52 : $monthly ? 12 : 4);
-    print $OU "$sum_txt,=SUM(B$i:B$j),=SUM(C$i:C$j),=SUM(D$i:D$j),=SUM(E$i:E$j)"
+    print $OU "$sum_avg,=SUM(B$i:B$j),=SUM(C$i:C$j),=SUM(D$i:D$j),=SUM(E$i:E$j)"
         .($curb ? ",=SUM(F$i:F$j),=SUM(G$i:G$j)" : "").",$each in Wh\n";
     print $OU "$type_txt,$PV_gross_txt,"
         ."$PV_net_txt".($curb ? " $without_curb" : "").","

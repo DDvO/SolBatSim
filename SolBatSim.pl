@@ -6,7 +6,7 @@
 #
 # Nutzung: Solar.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
 #            (<PV-Daten-Datei> [<Brutto-Nennleistung in Wp> [<Limit in W>]])+
-#            [-date <Jahr>[-<Monat>[-<Tag>[:<Stunde>]]]]
+#            [-only <Jahr>[-<Monat>[-<Tag>[:<Stunde>]]]]
 #            [-dist <relative Lastverteilung über den Tag pro Stunde 0,..,23>
 #            [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>
 #            [-load <konstante Last in W> [<Zahl der Tage pro Woche, sonst 5>:
@@ -52,7 +52,7 @@
 #
 # Usage: Solar.pl <load profile file> [<consumption per year in kWh>]
 #          (<PV data file> [<nominal gross power in Wp> [<limit in W]])+
-#          [-date <year>[-<month>[-<day>[:<hour]]]]
+#          [-only <year>[-<month>[-<day>[:<hour]]]]
 #          [-dist <relative load distribution over each day, per hour 0,..,23>
 #          [-bend <load distort factors for hour 0,..,23 each day, default 1>
 #          [-load <constant load in W> [<count of days per week, default 5>:
@@ -211,7 +211,7 @@ my ($en, $date, $tmy, $curb,
 while ($#ARGV >= 0) {
     if      ($ARGV[0] eq "-test"    ) { $test         = num_arg();
     } elsif ($ARGV[0] eq "-en"      ) { $en           =  no_arg();
-    } elsif ($ARGV[0] eq "-date"    ) { $date         = str_arg();
+    } elsif ($ARGV[0] eq "-only"    ) { $date         = str_arg();
     } elsif ($ARGV[0] eq "-dist"    ) { $load_dist    = str_arg();
     } elsif ($ARGV[0] eq "-bend"    ) { $load_factors = str_arg();
     } elsif ($ARGV[0] eq "-load"    ) { $load_const   = num_arg();
@@ -294,11 +294,11 @@ if ($test) {
 }
 
 die "Missing PV data file name" if $#PV_peaks < 0;
-die "-date option does not have form (*|YYYY)[-(*|MM)[-(*|DD)[:(*|HH)]]]"
+die "-only option does not have form (*|YYYY)[-(*|MM)[-(*|DD)[:(*|HH)]]]"
     if $date &&
     !($date =~ m/^(\*|\d\d?\d?\d?)(-(\*|\d\d?)(-(\*|\d\d?)(:(\*|\d\d?))?)?)?$/);
 my ($sel_year, $sel_month, $sel_day, $sel_hour) = ($1, $3, $5, $7) if $date;
-die "with -tmy, the year given with the -date option must be '*'"
+die "with -tmy, the year given with the -only option must be '*'"
     if $tmy && defined $sel_year && $sel_year ne "*";
 
 die "Missing load profile file name - should be first CLI argument"
@@ -349,11 +349,13 @@ sub check_consistency {
 }
 
 sub date_string {
-    return sprintf("%02d", shift)."-".sprintf("%02d", shift).
+    my $year = shift;
+    $year = "YYYY" if $year eq "0";
+    return "$year-".sprintf("%02d", shift)."-".sprintf("%02d", shift).
         " ".($en ? "at" : "um")." ".sprintf("%02d", shift);
 }
 sub time_string {
-    return date_string(shift, shift, shift).sprintf(":%02d h", int(shift));
+    return date_string(shift,shift,shift,shift).sprintf(":%02d h", int(shift));
 }
 sub minute_string {
     my ($item, $items) = (shift, shift);
@@ -417,10 +419,10 @@ sub adjust_day_month {
 # read load profile data
 
 sub max_load {
-    my ($load, $month, $day, $hour, $min) = (shift, shift, shift, shift, shift);
+    my $load = shift;
     if ($load > $load_max) {
         $load_max = $load;
-        $load_max_time = time_string($month, $day, $hour, $min);
+        $load_max_time = time_string(shift, shift, shift, shift, shift);
     }
 }
 
@@ -523,6 +525,7 @@ sub get_profile {
     for (my $hour_per_year = 0; $hour_per_year < $num_hours; $hour_per_year++) {
         my @sources = split ",", $lines[$hour_per_year % $hours];
         my $n = $#sources;
+        my $year = $sources[0] =~ /((19|20)\d\d)/ ? $1 : "YYYY";
         shift @sources; # ignore date & time info
         if ($items > 0 && $items != $n) {
             print "Warning: unequal number of items per line: $n vs. $items in "
@@ -541,8 +544,7 @@ sub get_profile {
             if ($load <= 0) {
                 my $lang = $en;
                 $en = 1;
-                print "Warning: load on YYYY-".
-                    date_string($month, $day, $hour)
+                print "Warning: load on ".date_string(0, $month, $day, $hour)
                     .sprintf("h, item %4d", $item + 1)." = $load\n"
                     unless $test || $warned_just_before;
                 $en = $lang;
@@ -570,7 +572,7 @@ sub get_profile {
                     $items_by_hour[$month][$day][$hour] = 1;
                     $hload = $load_const if defined $load_const;
                     $load_item[$month][$day][$hour][0] = $hload;
-                    max_load($hload, $month, $day, $hour, 0);
+                    max_load($hload, $year, $month, $day, $hour, 0);
                 } else {
                     my $orig_hload = $hload;
                     $hload = $load[$month][$day][$hour] = $load_factors[$hour] *
@@ -583,7 +585,7 @@ sub get_profile {
                         $load *= $hload / $orig_hload
                             if defined $load_dist && $orig_hload != 0;
                         $load_item[$month][$day][$hour][$item] = $load;
-                        max_load($load, $month, $day, $hour, 60 * $item / $n);
+                        max_load($load,$year,$month,$day, $hour,60* $item / $n);
                     }
                 }
                 $load_by_hour   [$hour   ] += $hload;
@@ -616,6 +618,7 @@ my $sn = $load_scale / $n_days;
 for (my $hour = 0; $hour < 24; $hour++) {
     $load_per_hour[$hour] = round($load_by_hour[$hour] * $sn);
 }
+$load_max *= $load_scale;
 
 my $profile_txt = $en ? "load profile file"     : "Lastprofil-Datei";
 my $pv_data_txt = $en ? "PV data file"          : "PV-Daten-Datei";
@@ -635,7 +638,7 @@ my $per3  = $en ? "per 3 hours"                 : "pro 3 Stunden";
 my $per_m = $en ? "per month"                   : "pro Monat";
 my $W_txt = $en ? "portion per weekday (Mo-Su)" :"Anteil pro Wochentag (Mo-So)";
 my $b_txt = $en ? "basic load                 " : "Grundlast                  ";
-my $M_txt = $en ? "maximal load               " : "Maximallast                ";
+my $M_txt = $en ? "max load"                    : "Maximallast";
 my $on    = $en ? "on" : "am";
 my $en1 = $en ? " "   : "";
 my $en2 = $en ? "  "  : "";
@@ -655,7 +658,7 @@ if ($verbose) {
 }
 print "$b_txt =".W($night_sum * $load_scale / (NIGHT_END - NIGHT_START)
                    / $n_days)."\n";
-print "$M_txt =".W($load_max * $load_scale)." $on $load_max_time\n";
+print "$M_txt $en3                =".W($load_max)." $on $load_max_time\n";
 print "$D_txt $en1= @load_dist[0..23]\n" if defined $load_dist;
 print "$d_txt $de1 = @load_factors\n"    if defined $load_factors;
 if ($verbose) {
@@ -673,12 +676,6 @@ print "\n";
 # read PV production data
 
 my @PV_gross_out;
-my @PV_per_hour;
-my @PV_by_hour;
-my @PV_by_month;
-my $PV_gross_out_sum = 0;
-my $PV_gross_max = 0;
-my $PV_gross_max_tm;
 my ($start_year, $years);
 my $garbled_hours = 0;
 sub get_power {
@@ -786,14 +783,6 @@ sub get_power {
         $power *= $power_rate unless $test;
         $power = $limit if $limit != 0 && $power > $limit;
         $PV_gross_out[$year - $start_year][$month][$day][$hour] += $power;
-        $PV_by_hour[$hour] += $power;
-        $PV_by_month[$month] += $power;
-        $PV_gross_out_sum += $power;
-        if ($power > $PV_gross_max) {
-            $PV_gross_max = $power;
-            $PV_gross_max_tm = ($tmy ? "TMY" : $year)."-"
-                .time_string($month, $day, $hour, $minute);
-        }
         $hours++;
         last if $test && $hours == TEST_END;
     }
@@ -827,19 +816,23 @@ for (my $i = 0; $i <= $#PV_files; $i++) {
 }
 my $PV_peaks = join("+", @PV_peaks);
 my $PV_limit = join("+", @PV_limit);
-for (my $hour = 0; $hour < 24; $hour++) {
-    $PV_per_hour[$hour] = round($PV_by_hour[$hour] / $n_days / $years);
-}
 
 ################################################################################
 # PV usage simulation
 
+my @PV_per_hour;
+my @PV_by_hour;
+my @PV_by_month;
+my $PV_gross_out_sum = 0;
+my $PV_gross_max = 0;
+my $PV_gross_max_time;
+
 my @PV_net_out;
 my $PV_net_out_sum = 0;
-
 my @PV_net_loss;
 my $PV_net_losses = 0;
 my $PV_net_loss_hours = 0;
+
 my @PV_use_loss_by_item;
 my @PV_use_loss;
 my $PV_use_loss_sum = 0;
@@ -848,10 +841,12 @@ my @PV_used_by_item;
 my @PV_used;
 my $PV_used_sum = 0;
 my $PV_used_via_storage = 0;
+
 my @grid_feed_by_item if $max;
 my @grid_feed_per_hour;
 my @grid_feed;
 my $grid_feed_sum = 0;
+
 my $charge_max = $capacity *      $soc  if defined $capacity;
 my $charge_min = $capacity * (1 - $dod) if defined $capacity;
 my $charge            if defined $capacity; # charge state of the battery
@@ -889,12 +884,13 @@ sub simulate()
 
     my $end_year = $years;
     if (defined $sel_year && $sel_year ne "*") {
-        $year = $sel_year - $start_year ;
-        die "year given with -date option must be in range $start_year..".
+        $year = $sel_year - $start_year;
+        die "year given with -only option must be in range $start_year..".
             ($start_year + $years - 1) if $year < 0 || $year >= $years;
         ($years, $end_year) = (1, $year + 1);
     }
     while ($year < $end_year) {
+        my $year_ = $tmy ? "TMY" : $start_year + $year;
         $PV_net_loss[$month][$day][$hour] = 0;
         $PV_use_loss[$month][$day][$hour] = 0;
         if ((defined $sel_month) && $sel_month ne "*" && $month != $sel_month ||
@@ -910,9 +906,16 @@ sub simulate()
                 $power = 0; # likely just garbled hour
             } else {
                 $en = 1;
-                die "No power data at ".($start_year + $year)."-".
-                    time_string($month, $day, $hour, $minute);
+                die "No power data for ".
+                    time_string($year_, $month, $day, $hour, $minute);
             }
+        }
+        $PV_by_hour [$hour ] += $power;
+        $PV_by_month[$month] += $power;
+        $PV_gross_out_sum += $power;
+        if ($power > $PV_gross_max) {
+            $PV_gross_max = $power;
+            $PV_gross_max_time = time_string($year_,$month,$day,$hour,$minute);
         }
         my $net_pv_power = $power * $pvsys_eff * $inverter_eff;
 
@@ -923,7 +926,7 @@ sub simulate()
             $PV_net_losses += $PV_loss;
             $PV_net_loss_hours++;
             $net_pv_power = $curb;
-            # print "$year-".time_string($month, $day, $hour, $minute).
+            # print "$year-".time_string($year_, $month, $day, $hour, $minute).
             #"\tPV=".round($net_pv_power)."\tcurb=".round($curb).
             #"\tloss=".round($PV_net_losses)."\t$_\n";
         }
@@ -1139,7 +1142,7 @@ sub simulate()
         $AC_coupling_losses_this_hour *= $load_scale / $items;
         $AC_coupling_losses += $AC_coupling_losses_this_hour;
         # $sum_needed += $needed * $load_scale / $items; # per hour
-        # print "$year-".time_string($month, $day, $hour, $minute).
+        # print "$year-".time_string($year_, $month, $day, $hour, $minute).
         # "\tPV=".round($net_pv_power)."\tPN=".round($needed)."\tPU=".round($usages).
         # "\t$_\n" if $net_pv_power != 0 && m/^20160214:1010/; # m/^20....02:12/;
         $usages *= $load_scale / $items;
@@ -1179,7 +1182,6 @@ sub simulate()
     }
     print "\n" if $test;
 
-    $load_max *= $load_scale;
     $load_sum *= $load_scale;
     $PV_gross_out_sum /= $years;
     $PV_net_losses /= $years;
@@ -1212,9 +1214,11 @@ sub simulate()
 }
 
 simulate();
-die "PV power data all zero" unless $PV_gross_max_tm;
+
+die "PV power data all zero" unless $PV_gross_max_time;
 my $sny = $sn / $years;
 for (my $hour = 0; $hour < 24; $hour++) {
+    $PV_per_hour[$hour] = round($PV_by_hour[$hour] / $n_days / $years);
     $grid_feed_per_hour[$hour] = round($grid_feed_per_hour[$hour] * $sny);
     if (defined $capacity) {
         $charge_per_hour[$hour] = round($charge_per_hour[$hour] * $sny);
@@ -1300,6 +1304,7 @@ my $P_txt = $en ? "average PV power each hour"  : "Mittlere PV-Leistung je Std";
 my $F_txt = $en ? "average grid feed each hour" : "Mittlere Einspeisung je Std";
 my $dischg_after_txt = "$dischg_txt $after $storage_loss_txt";
 
+my $only_during = defined $date ? " $only $during $date" : "";
 my $own_ratio = round_percent($PV_net_out_sum ? $PV_used_sum/$PV_net_out_sum:0);
 my $load_coverage = round_percent($load_sum ? $PV_used_sum / $load_sum : 0);
 my $storage_loss;
@@ -1334,15 +1339,15 @@ sub save_statistics {
     my $limits_sum  = $#PV_limit == 0 ? $PV_limit[0] : "=$PV_limit";
     print $OU "$consumpt_txt in kWh,";
     print $OU "$load_const_txt in W $load_during_txt," if defined $load_const;
-    print $OU "$profile_txt,$pv_data_txt$plural_txt\n";
+    print $OU "$profile_txt,$M_txt in W $on $load_max_time,";
+    print $OU "$pv_data_txt$plural_txt$only_during\n";
     print $OU "".round_1000($load_sum).",";
     print $OU "$load_const," if defined $load_const;
-    print $OU "$load_profile,".join(",", @PV_files)."\n";
+    print $OU "$load_profile,".int($load_max).",".join(",", @PV_files)."\n";
 
     $pvsys_eff = round_percent($pvsys_eff);
-    print $OU "$nominal_txt in Wp,$limits_txt in W"
-        .($date ? " $only $during $date" : "")
-        .",$max_gross_txt in W $on $PV_gross_max_tm,"
+    print $OU "$nominal_txt in Wp,$limits_txt in W,"
+        ."$max_gross_txt in W $on $PV_gross_max_time,"
         ."$inv_curb_txt in W,$pvsys_eff_txt,$ieff_txt,"
         ."$own_ratio_txt,$load_cover_txt,";
     print $OU ",$D_txt:,".join(",", @load_dist) if defined $load_dist;
@@ -1546,8 +1551,8 @@ if (!$test) {
 my $nominal_sum = $#PV_peaks == 0 ? "" : " = $PV_peaks Wp";
 my $limits_sum = $total_limit == 0 ? "" : " $limits_txt: ".$PV_limit;
 print "$nominal_txt $en2         =" .W($nominal_power_sum)."p$nominal_sum".
-    $limits_sum.($date ? " $only $during $date" : "")."\n";
-print "$max_gross_txt $en4     =".W($PV_gross_max)." $on $PV_gross_max_tm\n";
+    "$only_during$limits_sum\n";
+print "$max_gross_txt $en4     =".W($PV_gross_max)." $on $PV_gross_max_time\n";
 print "$PV_gross_txt $en1            =".kWh($PV_gross_out_sum).
     ", $pvsys_eff_txt ".percent($pvsys_eff)."%\n";
 if ($verbose) {

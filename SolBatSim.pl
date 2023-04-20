@@ -38,7 +38,7 @@
 # Beispiel:
 # Solar.pl Lastprofil.csv 3000 Solardaten_1215_kWh.csv 1000 -curb 600 -tmy
 #
-# Beziehe Solardaten für Standort von https://re.jrc.ec.europa.eu/pvg_tools/de/
+# PV-Daten können bezogen werden von https://re.jrc.ec.europa.eu/pvg_tools/de/
 # Wähle den Standort und "DATEN PRO STUNDE", setze Häkchen bei "PV-Leistung".
 # Optional "Installierte maximale PV-Leistung" und "Systemverlust" anpassen.
 # Bei Nutzung von "-tmy" Startjahr 2008 oder früher, Endjahr 2018 oder später.
@@ -84,7 +84,7 @@
 # Example:
 # Solar.pl loadprofile.csv 3000 solardata_1215_kWh.csv 1000 -curb 600 -tmy -en
 #
-# Take solar data from https://re.jrc.ec.europa.eu/pvg_tools/
+# PV data can be obtained from https://re.jrc.ec.europa.eu/pvg_tools/
 # Select location, click "HOURLY DATA", and set the check mark at "PV power".
 # Optionally may adapt "Installed peak PV power" and "System loss" already here.
 # For using TMY data, choose Start year 2008 or earlier, End year 2018 or later.
@@ -118,7 +118,7 @@ use constant TimeZone => 1; # CET/MEZ
 my @PV_files;
 my @PV_peaks;       # nominal/maximal PV output(s), default from PV data file(s)
 my @PV_limit;       # power limit of PV output(s), default 0 (none)
-my ($lat, $lon);    # from PV data file(s)
+my ($lat, $lon);    # optional, from PV data file(s)
 my $pvsys_eff;      # PV system efficiency, default from PV data file(s)
 my $inverter_eff;   # inverter efficiency; default see below
 my $capacity;       # nominal storage capacity in Wh on average degradation
@@ -688,8 +688,8 @@ sub get_power {
     my ($slope, $azimuth);
     my $current_years = 0;
     my $nominal_power_deflt; # PVGIS default: 1 kWp
-    my     $pvsys_eff_deflt; # PVGIS default: 0.86
-    my      $power_provided; # PVGIS default: none
+    my     $pvsys_eff_deflt; # PVGIS default: 0.86 / $inverter_eff_never_0
+    my $power_provided = 1; # PVGIS default: none
     my $power_rate;
     my ($months, $hours) = (0, 0);
     while ($_ = !$test ? <$IN>
@@ -699,7 +699,7 @@ sub get_power {
              $nominal_power : 0)."\n") {
         chomp;
         if (m/^Latitude \(decimal degrees\):[\s,]*(-?\d+([\.,]\d+)?)/) {
-            check_consistency($1, $lat, "latitude", $file) if $lat;
+            check_consistency($1, $lat, "latitude", $file) if defined $lat;
             $lat = $1;
         }
         if (m/^Longitude \(decimal degrees\):[\s,]*(-?\d+([\.,]\d+)?)/) {
@@ -708,47 +708,64 @@ sub get_power {
         }
         $slope   = $1 if (!$slope   && m/^Slope:\s*(-?[\d\.]+ deg[^,\s]*)/);
         $azimuth = $1 if (!$azimuth && m/^Azimuth:\s*(-?[\d\.]+ deg[^,\s]*)/);
-        if (!$nominal_power_deflt && m/Nominal power.*? \(kWp\):[\s,]*([\d\.]+)/) {
-            $nominal_power_deflt = $1 * 1000;
-            $nominal_power = $nominal_power_deflt unless $nominal_power;
-            $nominal_power_sum += $nominal_power;
-        }
-        if (!$pvsys_eff_deflt && m/System losses \(%\):[\s,]*(\d+([\.,]\d+)?)/) {
+        $nominal_power_deflt = $1 * 1000
+            if (!defined $nominal_power_deflt
+                && m/Nominal power.*? \(kWp\):[\s,]*([\d\.]+)/);
+        if (!$pvsys_eff_deflt
+            && m/System losses \(%\):[\s,]*(\d+([\.,]\d+)?)/) {
             my $seff = 1 - $1 / 100;
-            my $eff = percent($seff);
             # See section "System loss" in
             # ​https://joint-research-centre.ec.europa.eu/pvgis-online-tool/getting-started-pvgis/pvgis-user-manual_en
             $pvsys_eff_deflt = $seff / $inverter_eff_never_0;
+            my $eff = percent($seff);
             print ", ".($en ?
                         "contained system efficiency $eff% was overridden" :
                         "enthaltene System-Effizienz $eff% wurde übersteuert")
                 if !$test && $pvsys_eff && $pvsys_eff != $pvsys_eff_deflt
                 && abs($seff - $pvsys_eff * $inverter_eff) >= .5;
+        }
+        $power_provided = 0 if m/^time,/ && !(m/^time,P,/);
+
+        # work around CSV lines at hour 00 garbled by load&save with LibreOffice
+        $garbled_hours++ if s/^\d+:10:00,0,/20000000:0000,0,/;
+        next unless m/^20\d\d\d\d\d\d:\d\d\d\d,/;
+
+        unless (defined $power_rate || $test) {
+            print "\n" # close line started with print "$pv_data_txt..."
+                unless # $lat && $lon && $slope && $azimuth &&
+                $nominal_power_deflt && $pvsys_eff_deflt && $power_provided;
+            # die "Missing latitude in $file"  unless $lat;
+            # die "Missing longitude in $file" unless $lon;
+            # die "Missing slope in $file"     unless $slope;
+            # die "Missing azimuth in $file"   unless $azimuth;
+            die "Missing PV power output data in $file" unless $power_provided;
+
+            unless (defined $nominal_power_deflt) {
+                die "Missing nominal PV power in command line option or $file"
+                    unless $nominal_power;
+                print "Warning: cannot find nominal PV power in $file, ".
+                    "taking value $nominal_power from command line\n";
+                $nominal_power_deflt = $nominal_power;
+            }
+            $nominal_power = $nominal_power_deflt unless $nominal_power;
+            $nominal_power_sum += $nominal_power;
+            $power_rate = $nominal_power / $nominal_power_deflt;
+
+            unless (defined $pvsys_eff_deflt) {
+                print "Warning: cannot find system efficiency in $file and no ".
+                    "-peff option given, assuming system efficiency 86% and ".
+                    "that PV data is net, after PV losses and inverter losses\n"
+                    unless $pvsys_eff;
+                $pvsys_eff_deflt = 0.86 / $inverter_eff;
+                #$power_rate *= $inverter_eff; # if PV data is before inv losses
+            }
             $pvsys_eff = $pvsys_eff_deflt unless defined $pvsys_eff;
             if ($pvsys_eff > 1) {
                 print "\n"; # close line started with print "$pv_data_txt..."
                 die "unreasonable PV system efficiency ".percent($pvsys_eff)
                     ."% - have -peff and -ieff been used properly?";
             }
-            $power_rate = $nominal_power / $nominal_power_deflt
-                / ($pvsys_eff_deflt * $inverter_eff);
-        }
-        $power_provided = 1 if m/^time,P,/;
-
-        # work around CSV lines at hour 00 garbled by load&save with LibreOffice
-        $garbled_hours++ if s/^\d+:10:00,0,/20000000:0000,0,/;
-        next unless m/^20\d\d\d\d\d\d:\d\d\d\d,/;
-        unless ($test) {
-            print "\n" # close line started with print "$pv_data_txt..."
-                unless $lat && $lon && $slope && $azimuth
-                && $nominal_power_deflt && $pvsys_eff_deflt && $power_provided;
-            die "Missing latitude in $file"  unless $lat;
-            die "Missing longitude in $file" unless $lon;
-            die "Missing slope in $file"     unless $slope;
-            die "Missing azimuth in $file"   unless $azimuth;
-            die "Missing nominal power in $file" unless $nominal_power_deflt;
-            die "Missing system efficiency in $file" unless $pvsys_eff_deflt;
-            die "Missing PV power output data in $file" unless $power_provided;
+            $power_rate /= ($pvsys_eff * $inverter_eff);
         }
 
         next if m/^20\d\d0229:/; # skip data of Feb 29th (in leap years)
@@ -801,11 +818,13 @@ sub get_power {
         return $nominal_power;
     }
 
-    $slope   =~ s/ deg\./°/;
-    $azimuth =~ s/ deg\./°/;
-    $slope   =~ s/optimum/opt./;
-    $azimuth =~ s/optimum/opt./;
-    print "$slope_txt, $azimuth_txt$en3$en3$en2      = $slope, $azimuth\n";
+    if (defined $slope && defined $azimuth) {
+        $slope   =~ s/ deg\./°/;
+        $azimuth =~ s/ deg\./°/;
+        $slope   =~ s/optimum/opt./;
+        $azimuth =~ s/optimum/opt./;
+        print "$slope_txt, $azimuth_txt$en3$en3$en2      = $slope, $azimuth\n";
+    }
     return $nominal_power;
 }
 
@@ -1544,7 +1563,7 @@ my $of_consumption = $en ? "of consumption" : "des Verbrauchs (Autarkiegrad)";
 # PV-Abregelungsverlust"
 my $lat_txt        = $en ? "latitude"             : "Breitengrad";
 my $lon_txt        = $en ? "longitude"            : "Längengrad";
-if (!$test) {
+if (defined $lat && defined $lon && !$test) {
     print "$lat_txt, $lon_txt $en4    = $lat, $lon\n";
     print "\n";
 }

@@ -41,7 +41,7 @@
 # PV-Daten können bezogen werden von https://re.jrc.ec.europa.eu/pvg_tools/de/
 # Wähle den Standort und "DATEN PRO STUNDE", setze Häkchen bei "PV-Leistung".
 # Optional "Installierte maximale PV-Leistung" und "Systemverlust" anpassen.
-# Bei Nutzung von "-tmy" Startjahr 2008 oder früher, Endjahr 2018 oder später.
+# Bei Nutzung von "-tmy" Startjahr 2008 oder früher, Endjahr 2020 oder später.
 # Dann den Download-Knopf "csv" drücken.
 #
 ################################################################################
@@ -87,7 +87,7 @@
 # PV data can be obtained from https://re.jrc.ec.europa.eu/pvg_tools/
 # Select location, click "HOURLY DATA", and set the check mark at "PV power".
 # Optionally may adapt "Installed peak PV power" and "System loss" already here.
-# For using TMY data, choose Start year 2008 or earlier, End year 2018 or later.
+# For using TMY data, choose Start year 2008 or earlier, End year 2020 or later.
 # Then press the download button marked "csv".
 #
 # (c) 2022-2023 David von Oheimb - License: MIT - Version 2.3
@@ -930,8 +930,11 @@ sub simulate()
             ($start_year + $years - 1) if $year < 0 || $year >= $years;
         ($years, $end_year) = (1, $year + 1);
     }
+    STDOUT->autoflush(1);
+    print "".($en ? "simulated PV year  " : "Simuliertes PV-Jahr")."         ="
+        unless $test;
     while ($year < $end_year) {
-        my $year_ = $tmy ? "TMY" : $start_year + $year;
+        my $year_ = $tmy ? "TMY (2008..2020)" : $start_year + $year;
         $PV_net_loss[$month][$day][$hour] = 0;
         $PV_use_loss[$month][$day][$hour] = 0;
         if ((defined $sel_month) && $sel_month ne "*" && $month != $sel_month ||
@@ -1230,10 +1233,14 @@ sub simulate()
       NEXT:
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
-        ($year, $month, $day) = ($year + 1, 1, 1) if $month > 12;
+        if ($month > 12) {
+            print " $year_" unless $test;
+            ($year, $month, $day) = ($year + 1, 1, 1);
+        }
         last if $test && ($day - 1) * 24 + $hour == TEST_END;
     }
-    print "\n" if $test;
+    print "\n\n"; # also if test
+    STDOUT->autoflush(0);
 
     $load_sum *= $load_scale;
     $PV_gross_sum /= $years;

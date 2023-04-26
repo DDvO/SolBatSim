@@ -935,8 +935,8 @@ sub simulate()
         unless $test;
     while ($year < $end_year) {
         my $year_ = $tmy ? "TMY (2008..2020)" : $start_year + $year;
-        $PV_net_loss[$month][$day][$hour] = 0;
-        $PV_use_loss[$month][$day][$hour] = 0;
+        $PV_net_loss[$month][$day][$hour] = 0 if $year == 0;
+        $PV_use_loss[$month][$day][$hour] = 0 if $year == 0;
         if ((defined $sel_month) && $sel_month ne "*" && $month != $sel_month ||
             (defined $sel_day  ) && $sel_day   ne "*" && $day   != $sel_day ||
             (defined $sel_hour ) && $sel_hour  ne "*" && $hour  != $sel_hour) {

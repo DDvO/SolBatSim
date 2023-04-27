@@ -910,7 +910,7 @@ sub simulate()
     my $minute = 0; # currently fixed
 
     # factor out $load_scale for optimizing the inner loop
-    if ($capacity) {
+    if (defined $capacity) {
         $capacity /= $load_scale_never_0;
         $soc_max /= $load_scale_never_0;
         $soc_min /= $load_scale_never_0;
@@ -1001,7 +1001,7 @@ sub simulate()
             $soc_max *= $items;
             $soc_min *= $items;
             $soc *= $items;
-            # $charging_loss *= $items;
+            $charging_loss *= $items;
             $spill_loss *= $items;
             $PV_used_via_storage *= $items;
         }
@@ -1098,7 +1098,7 @@ sub simulate()
 
                     $charge_delta = $charge_input * $charge_eff;
                     $soc += $charge_delta;
-                    # $charging_loss += $charge_input - $charge_delta;
+                    $charging_loss += $charge_input - $charge_delta;
                 } elsif ($test_started) {
                     printf("                           "); # no $excess_power
                     printf("                          "); # no surplus
@@ -1215,7 +1215,7 @@ sub simulate()
                 $soc_max /= $items;
                 $soc_min /= $items;
                 $soc /= $items;
-                # $charging_loss /= $items;
+                $charging_loss /= $items;
                 $spill_loss /= $items;
                 $PV_used_via_storage /= $items;
                 $hcharge_delta /= $items;
@@ -1267,7 +1267,7 @@ sub simulate()
         $soc        *= $load_scale;
         $charge_sum *= $load_scale / $years;
         $dischg_sum *= $load_scale / $years;
-        # $charging_loss *= $load_scale / $years;
+        $charging_loss *= $load_scale / $years;
         $spill_loss *= $load_scale / $years;
         $PV_used_via_storage *= $load_scale / $years;
     }
@@ -1369,8 +1369,15 @@ my $load_coverage = round_percent($load_sum ? $PV_used_sum / $load_sum : 0);
 my $storage_loss;
 my $cycles = 0;
 if (defined $capacity) { # also for future loss when discharging the rest:
-    $charging_loss = ($charge_eff ? $charge_sum * (1 / $charge_eff - 1) : 0);
     $charging_loss *= $inverter_eff unless $AC_coupled;
+    my $chg_loss_alt = ($charge_eff ? $charge_sum * (1 / $charge_eff - 1) : 0);
+    $chg_loss_alt *= $inverter_eff unless $AC_coupled;
+    if ($charge_eff) {
+        my $discrepancy = $charging_loss - $chg_loss_alt;
+        die "Internal error: charging loss calculation discrepancy ".
+            "$discrepancy: $charging_loss vs. $chg_loss_alt"
+            if abs($discrepancy) > 0.001; # 1 mWh
+    }
     $storage_loss = $charge_sum * (1 - $storage_eff);
     $storage_loss *= $inverter_eff unless $AC_coupled;
     $cycles = round($charge_sum / ($soc_max - $soc_min)) if $capacity !=0;

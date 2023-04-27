@@ -14,7 +14,7 @@
 #   [-avg_hour] [-verbose]
 #   [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
 #   [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>]
-#   [-ac] {AC-gekoppelter Speicher, ohne Verlust durch Überlauf}
+#   [-dc|-ac] {Speicherkopplung; AC hat Verlust im WR aber nicht durch Überlauf}
 #   [-pass [spill] <Speicher-Umgehung in W, opt. auch bei Überfluss>]
 #   [-feed (max <begrenzte bedarfsgerechte Entladung aus Speicher in W>
 #           | [<von Uhrzeit, sonst 0 Uhr>..<bis Uhrzeit, sonst 24 Uhr>]
@@ -60,7 +60,7 @@
 #          [-avg_hour] [-verbose]
 #          [-peff <PV system efficiency in %, default from PV data file(s)>]
 #          [-capacity <storage capacity in Wh, default 0 (no battery)>]
-#          [-ac] {AC-coupled charging after inverter, without loss by spill}
+#          [-dc|-ac] {AC-coupled charging has inverter loss, but no spill loss}
 #          [-pass [spill] <storage bypass in W, optionally also on surplus>]
 #          [-feed (max <limited feed-in from storage in W according to load>
 #                  | [<von Uhrzeit, sonst 0 Uhr>..<bis Uhrzeit, sonst 24 Uhr>]
@@ -128,7 +128,7 @@ my $max_feed;       # maximal feed-in in W from storage
 my $const_feed = 1; # constant feed-in, relevant only if defined $max_feed
 my $feed_from = 0;  # hour of constant feed-in begin
 my $feed_to   = 24; # hour of constant feed-in end
-my $AC_coupled;     # by default, charging is DC-coupled (w/o inverter)
+my $AC_coupled =-1; # by default, charging is AC-coupled (via inverter)
 my $max_soc   = .9; # maximal state of charge (SoC); default 90%
 my $max_dod   = .9; # maximal depth of discharge (DoD); default 90%
 my $max_charge = 1; # maximal charge rate; default 1 C
@@ -219,14 +219,16 @@ while ($#ARGV >= 0) {
                                            = ($1, $2, $3) if $#ARGV >= 0 &&
                                            $ARGV[0] =~ m/^(\d+):(\d+)\.\.(\d+)$/
                                            && shift @ARGV;
-    } elsif ($ARGV[0] eq "-avg_hour") { $avg_hour     = no_arg();
-    } elsif ($ARGV[0] eq "-verbose" ) { $verbose      = no_arg();
+    } elsif ($ARGV[0] eq "-avg_hour") { $avg_hour     =  no_arg();
+    } elsif ($ARGV[0] eq "-verbose" ) { $verbose      =  no_arg();
     } elsif ($ARGV[0] eq "-peff"    ) { $pvsys_eff    = eff_arg();
     } elsif ($ARGV[0] eq "-tmy"     ) { $tmy          =  no_arg();
     } elsif ($ARGV[0] eq "-curb"    ) { $curb         = num_arg();
     } elsif ($ARGV[0] eq "-capacity") { $capacity     = num_arg();
     } elsif ($ARGV[0] eq "-ac"      ) { $AC_coupled   =
                                         $bypass_spill =  no_arg();
+    } elsif ($ARGV[0] eq "-dc"      ) { $AC_coupled   =
+                                        $bypass_spill =  no_arg() * 0;
     } elsif ($ARGV[0] eq "-pass"    ) { $bypass_spill = 1 if $#ARGV >= 1 &&
                                             $ARGV[1] eq "spill" && shift @ARGV;
                                         $bypass       = num_arg();
@@ -325,7 +327,7 @@ if (defined $capacity) {
     die "End hour for -feed option must be in range 0..24"
         if  $feed_to > 24;
 } else {
-    die   "-ac option requires -capacity option" if defined $AC_coupled;
+    die   "-ac option requires -capacity option" if $AC_coupled >= 0;
     die "-pass option requires -capacity option" if defined $bypass;
     die "-feed option requires -capacity option" if defined $max_feed;
     die "-ceff option requires -capacity option" if defined $charge_eff;

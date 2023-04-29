@@ -275,8 +275,11 @@ use constant TEST_LOAD_LEN   =>
     TEST_END > TEST_DROP_END ? TEST_LENGTH - TEST_DROP_LEN
     : (TEST_END <= TEST_DROP_START ? TEST_END - TEST_START
        : TEST_DROP_START - TEST_START);
+my $test_drop_cons = defined $load_const && $load_from == TEST_DROP_START
+    && $load_to == TEST_DROP_END ? $load_const * TEST_DROP_LEN : 0;
 my $test_load = defined $consumption ?
-    $consumption * 1000 / TEST_LOAD_LEN : TEST_LOAD if $test;
+    ($consumption * 1000 - $test_drop_cons) / TEST_LOAD_LEN : TEST_LOAD
+    if $test;
 if ($test) {
     $load_profile  = "test load data";
     my $pv_nomin   = $#PV_nomin < 0 ? TEST_PV_NOMIN : $PV_nomin[0]; # in W
@@ -287,7 +290,7 @@ if ($test) {
     $pvsys_eff     = $pv_nomin ? $pv_power / $pv_nomin : 0.92
         unless defined $pvsys_eff;
     $inverter_eff  =  0.8 unless defined $inverter_eff;
-    $consumption = $test_load/1000 * TEST_LOAD_LEN unless defined $consumption;
+    # $consumption = $test_load/1000 * TEST_LOAD_LEN unless defined $consumption;
     push @PV_files, "test PV data" if $#PV_files < 0;
     push @PV_nomin, $pv_nomin      if $#PV_nomin < 0;
     push @PV_limit, $pv_limit      if $#PV_limit < 0;
@@ -1028,7 +1031,7 @@ sub simulate()
             die "Internal error: load_item[$month][$day][$hour][$item] ".
                 "is undefined" unless defined $load;
             printf("%02d".minute_string($item, $items)." load=%4d PV net=%4d ",
-                   $hour, $load, $pvnet_power) if $test_started;
+                   $hour, $load, $pvnet_power + .5) if $test_started;
             # $needed += $load;
             # load will be reduced by constant $bypass or $bypass_spill
 
@@ -1081,7 +1084,7 @@ sub simulate()
                         $surplus_net *= $inverter_eff unless $AC_coupled;
                         if (!defined $bypass) {
                             $grid_feed_in += $surplus_net; # on optimal charge
-                            printf("(grid feed=%4d) ", $surplus_net)
+                            printf("grid feed=%4d ", $surplus_net)
                                 if $test_started;
                         } elsif ($bypass_spill) { # implied by $AC_coupled
                             my $remaining_surplus = $surplus_net - $power_needed;
@@ -1098,11 +1101,11 @@ sub simulate()
                                    $used_surplus + .5) if $test_started;
                         } else { # defined $bypass && !$bypass_spill
                             $spill_loss += $surplus_net;
-                            printf("spill loss=%4d", $surplus_net + .5)
+                            printf("spill loss=%4d           ",$surplus_net +.5)
                                 if $test_started;
                         }
                     } elsif ($test_started) {
-                        printf("                          "); # no surplus
+                        printf(" " x (defined $bypass ? 26: 15)); # no surplus
                     }
 
                     # The following adds reduced charging due to curb
@@ -1116,12 +1119,12 @@ sub simulate()
                     $soc += $charge_delta;
                     $charging_loss += $charge_input - $charge_delta;
                 } elsif ($test_started) {
-                    printf("                           "); # no $excess_power
-                    printf("                          "); # no surplus
+                    printf(" " x 39); # no $excess_power
+                    printf(" " x (defined $bypass ? 26: 15)); # no surplus
                 }
                 my $print_charge = $test_started &&
                     ($excess_power > 0 || $soc > $soc_min);
-                printf("chrg loss=%4d dischrg needed=%4d [charge %4d + %4d ",
+                printf("chrg loss=%4d dischrg needed=%4d [SoC %4d + %4d ",
                        ($charge_input - $charge_delta) *
                        ($AC_coupled ? 1 : $inverter_eff) + .5,$power_needed +.5,
                        $soc - $charge_delta, $charge_delta) if $print_charge;
@@ -1148,8 +1151,8 @@ sub simulate()
                     $discharge = $max_dispower if $discharge > $max_dispower;
                     $discharge = $soc - $soc_min
                         if $discharge > $soc - $soc_min;
-                    printf("- lost=%4d - %4d ", $discharge * (1 - $storage_eff)
-                           + .5, $discharge*$storage_eff + .5) if $test_started;
+                    printf("- %4d - lost:%4d", $discharge * $storage_eff + .5,
+                           $discharge * (1 - $storage_eff) + .5) if $test_started;
                     if ($discharge != 0) {
                         $soc -= $discharge; # includes storage loss
                         $discharge *= $storage_eff;
@@ -1173,8 +1176,9 @@ sub simulate()
                 } else {
                     print "                   " if $test_started;
                 }
-                printf("= %4d] ", $soc) if $print_charge;
-                printf("AC coupling loss=%4d ", $AC_loss + .5)
+                # printf("= %4d] ", $soc + .5) if $print_charge;
+                printf("] ") if $print_charge;
+                printf("AC cpl. loss=%4d ", $AC_loss + .5)
                     if $print_charge && $AC_coupled;
                 $hcharge_delta += $charge_delta;
                 $hdischg_delta += $dischg_delta;
@@ -1183,7 +1187,8 @@ sub simulate()
                     $dischg_by_item[$month][$day][$hour][$item]+= $dischg_delta;
                 }
                 $soc_by_item[$month][$day][$hour][$item] += $soc;
-                printf(" " x 85) if $test_started && !$print_charge;
+                printf(" " x (53 + ($AC_coupled ? 18 : 0)))
+                    if $test_started && !$print_charge;
             } elsif ($excess_power > 0) {
                 $grid_feed_in = $excess_power;
             }
@@ -1254,7 +1259,8 @@ sub simulate()
         }
         last if $test && ($day - 1) * 24 + $hour == TEST_END;
     }
-    print "\n\n"; # also if test
+    print "\n";
+    print "\n" unless $test;
     STDOUT->autoflush(0);
 
     # average sums over $years:

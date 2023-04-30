@@ -927,12 +927,12 @@ sub simulate()
         # factor out $load_scale for optimizing the inner loop
         $capacity /= $load_scale_never_0;
         $bypass   /=  $load_scale_never_0 if defined $bypass;
-        $max_feed /= ($load_scale_never_0 * $storage_eff_never_0)
-            if defined $max_feed;
         $soc_max /= $load_scale_never_0;
         $soc_min /= $load_scale_never_0;
         $soc = $soc_min;
     }
+    my $max_feed_scaled_by_eff = $max_feed / ($load_scale_never_0
+        * $storage_eff_never_0 * $inverter_eff_never_0) if defined $max_feed;
 
     my $end_year = $years;
     # restrict simulation to year optionally given by the -only option
@@ -1024,7 +1024,7 @@ sub simulate()
         }
 
         my $test_started = $test && ($day - 1) * 24 + $hour >= TEST_START;
-        # my $feed_sum = 0 if defined $max_feed;
+        # my $feed_sum = 0 if defined $max_feed_scaled_by_eff;
         for (my $item = 0; $item < $items; $item++) {
             my $loss = 0;
             my $load = $load_item[$month][$day][$hour][$item];
@@ -1067,8 +1067,8 @@ sub simulate()
                     # $excess_power is the power available for charging
                     my $need_for_fill = $capacity_to_fill / $charge_eff_never_0;
                     my $limited_fill = $need_for_fill;
-                    $limited_fill = $max_chgpower
-                        if $limited_fill > $max_chgpower;
+                    $limited_fill = $max_chgpower if $limited_fill > $max_chgpower;
+
                     # optimal charge: exactly as much as unused and fits in
                     $charge_input = $excess_power;
                         # will become min($excess_power, $limited_fill);
@@ -1077,6 +1077,8 @@ sub simulate()
                            $excess_power + .5, $need_for_fill + .5,
                            max($surplus, 0) + .5) if $test_started;
                     if ($surplus > 0) {
+                        printf "power limit, " if $test_started
+                            && $limited_fill < $need_for_fill; # else SoC limit
                         $charge_input = $limited_fill;
                         my $surplus_net = $surplus;
                         $surplus_net *= $inverter_eff unless $AC_coupled;
@@ -1124,8 +1126,9 @@ sub simulate()
                     ($excess_power > 0 || $soc > $soc_min);
                 printf("chrg loss=%4d dischrg needed=%4d [SoC %4d + %4d ",
                        ($charge_input - $charge_delta) *
-                       ($AC_coupled ? 1 : $inverter_eff) + .5,$power_needed +.5,
-                       $soc - $charge_delta, $charge_delta) if $print_charge;
+                       ($AC_coupled ? 1 : $inverter_eff) + .5,
+                       $power_needed + .5, $soc - $charge_delta + .5,
+                       $charge_delta + .5) if $print_charge;
 
                 my $dischg_delta = 0;
                 my $AC_loss = 0;
@@ -1134,23 +1137,31 @@ sub simulate()
                     # $discharge = min($power_needed, $soc)
                     my $discharge = $power_needed /
                         ($storage_eff_never_0 * $inverter_eff_never_0);
-                    if (defined $max_feed) {
+                    if (defined $max_feed_scaled_by_eff) {
                         if ($const_feed) {
                             $discharge = 0;
-                            $discharge = $max_feed
+                            $discharge = $max_feed_scaled_by_eff
                                 if $feed_from > $feed_to
                                    ? ($feed_from <= $hour || $hour < $feed_to)
-                                   : ($feed_from <= $hour && $hour < $feed_to);
-                        } else {
-                            $discharge = $max_feed # optimal but limited feed
-                                if $discharge > $max_feed;
+                                : ($feed_from <= $hour && $hour < $feed_to);
+                        } else { # optimal but limited feed
+                            $discharge = $max_feed_scaled_by_eff
+                                if $discharge > $max_feed_scaled_by_eff;
                         }
                     }
-                    $discharge = $max_dispower if $discharge > $max_dispower;
-                    $discharge = $soc - $soc_min
-                        if $discharge > $soc - $soc_min;
-                    printf("- %4d - lost:%4d", $discharge * $storage_eff + .5,
-                           $discharge * (1 - $storage_eff) + .5) if $test_started;
+                    my $limited = "";
+                    if ($discharge > $max_dispower) {
+                        $limited = " [rate limit]";
+                        $discharge = $max_dispower;
+                    }
+                    my $charge_available = $soc - $soc_min;
+                    if ($discharge > $charge_available) {
+                        $limited .= " [DoD limit]";
+                        $discharge = $charge_available;
+                    }
+                    printf("- %4d%s - lost:%4d", $discharge * $storage_eff + .5,
+                           $limited, $discharge * (1 - $storage_eff) + .5)
+                        if $test_started;
                     if ($discharge != 0) {
                         $soc -= $discharge; # includes storage loss
                         $discharge *= $storage_eff;
@@ -1160,7 +1171,7 @@ sub simulate()
                             $AC_loss = $discharge - $discharge_net;
                             $AC_coupling_losses_this_hour += $AC_loss;
                         }
-                        if (defined $max_feed && $const_feed) {
+                        if (defined $max_feed_scaled_by_eff && $const_feed) {
                             # $feed_sum += $discharge;
                             my $dis_feed_in = $discharge_net - $power_needed;
                             if ($dis_feed_in > 0) {
@@ -1191,7 +1202,8 @@ sub simulate()
                 $grid_feed_in = $excess_power;
             }
 
-            printf("used=%4d\n", $pv_used + .5) if $test_started;
+            printf("used=%4d feed=%4d\n", $pv_used + .5,
+                $grid_feed_in + .5) if $test_started;
             $usages += $pv_used;
             $hgrid_feed += $grid_feed_in;
             if ($max) {
@@ -1279,8 +1291,6 @@ sub simulate()
         # undo: factor out $load_scale for optimizing the inner loop
         $capacity *= $load_scale_never_0;
         $bypass *= $load_scale_never_0 if defined $bypass;
-        $max_feed *= $load_scale_never_0 * $storage_eff_never_0
-            if defined $max_feed;
         $soc -= $soc_min;
         $soc_max *= $load_scale_never_0;
         $soc_min *= $load_scale_never_0;

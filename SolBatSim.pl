@@ -1040,13 +1040,11 @@ sub simulate()
 
             # $pv_used locally accumulates PV own consumption
             # feed by constant bypass or just as much as used (optimal charge)
-            my $pv_used = defined $bypass ? $bypass * $inverter_eff
-                : $load; # preliminary
+            my $pv_used = defined $bypass ? $bypass : $load; # preliminary
             my $excess_power = $pvnet_power - $pv_used;
             if ($excess_power < 0) {
                 $pv_used = $pvnet_power;
-                # == min($pvnet_power,
-                #        $bypass ? $bypass * $inverter_eff : $load)
+                # == min($pvnet_power, defined $bypass ? $bypass : $load)
             }
             if (defined $bypass) {
                 my $unused_bypass = $pv_used - $load;

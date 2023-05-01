@@ -117,28 +117,26 @@ my $first_weekday = 4;  # HTW load profiles start on Friday in 2010, Monday == 0
 use constant YearHours => 24 * 365;
 use constant TimeZone => 1; # CET/MEZ
 
-my @PV_files;
-my @PV_nomin;       # nominal/maximal PV output(s), default from PV data file(s)
-my @PV_limit;       # power limit at inverter input, default 0 (none)
-my ($lat, $lon);    # optional, from PV data file(s)
-my $pvsys_eff;      # PV system efficiency, default from PV data file(s)
-my $inverter_eff;   # inverter efficiency; default see below
-my $capacity;       # nominal storage capacity in Wh on average degradation
-my $bypass_spill;   # bypass storage on surplus (i.e., when storge is full)
-my $bypass;         # direct feed to inverter in W, bypassing storage
-my $max_feed;       # maximal feed-in in W from storage
-my $const_feed = 1; # constant feed-in, relevant only if defined $max_feed
-my $feed_from = 0;  # hour of constant feed-in begin
-my $feed_to   = 24; # hour of constant feed-in end
-my $AC_coupled =-1; # by default, charging is AC-coupled (via inverter)
-my $max_soc   = .9; # maximal state of charge (SoC); default 90%
-my $max_dod   = .9; # maximal depth of discharge (DoD); default 90%
-my $max_chgrate= 1; # maximal charge rate; default 1 C
-my $max_disrate= 1; # maximal discharge rate; default 1 C
-my $charge_eff;     # charge efficiency; default see below
-my $storage_eff;    # storage efficiency; default see below
-# storage efficiency and discharge efficiency could have been combined
-my $nominal_power_sum = 0;
+my @PV_files;         # PV data input file(s), one per string
+my @PV_nomin;         # nominal PV output(s), default from PV data file(s)
+my @PV_limit;         # power limit at inverter input, default 0 (none)
+my ($lat, $lon);      # optional, from PV data file(s)
+my $pvsys_eff;        # PV system efficiency, default from PV data file(s)
+my $inverter_eff;     # inverter efficiency; default see below
+my $capacity;         # nominal storage capacity in Wh on average degradation
+my $bypass;           # direct feed-in to inverter in W, bypassing storage
+my $bypass_spill;     # bypass storage on surplus (i.e., when storge is full)
+my $max_feed;         # maximal feed-in in W from storage
+my $const_feed  =  1; # constant feed-in, relevant only if defined $max_feed
+my $feed_from   =  0; # hour of constant feed-in begin
+my $feed_to     = 24; # hour of constant feed-in end
+my $AC_coupled  = -1; # by default, charging is AC-coupled (via inverter)
+my $max_soc     = .9; # maximal state of charge (SoC); default 90%
+my $max_dod     = .9; # maximal depth of discharge (DoD); default 90%
+my $max_chgrate =  1; # maximal charge rate; default 1 C
+my $max_disrate =  1; # maximal discharge rate; default 1 C
+my $charge_eff;       # charge efficiency; default see below
+my $storage_eff;      # storage efficiency; default see below
 
 while ($#ARGV >= 0 && $ARGV[0] =~ m/^\s*[^-]/) {
     push @PV_files, shift @ARGV; # PV data file
@@ -687,6 +685,7 @@ print "\n";
 ################################################################################
 # read PV production data
 
+my $nominal_power_sum = 0;
 my @PV_gross;
 my @PV_net;
 my ($start_year, $years);
@@ -900,7 +899,7 @@ my $soc_max = $capacity *      $max_soc  if defined $capacity;
 my $soc_min = $capacity * (1 - $max_dod) if defined $capacity;
 my $max_chgpower = $max_chgrate * $capacity / $charge_eff_never_0
     if defined $capacity;
-my $max_dispower = $max_disrate* $capacity / $storage_eff_never_0
+my $max_dispower = $max_disrate * $capacity / $storage_eff_never_0
     if defined $capacity;
 my @soc               if defined $capacity; # state of charge on avg over years
 my @soc_by_item       if defined $capacity;
@@ -915,7 +914,7 @@ my @dischg_per_hour   if defined $capacity;
 my $dischg_sum = 0    if defined $capacity;
 my $charging_loss = 0 if defined $capacity;
 my $spill_loss    = 0 if defined $capacity;
-my $AC_coupling_losses = 0 if defined $capacity;
+my $AC_cpl_losses = 0 if defined $capacity;
 
 sub simulate()
 {
@@ -926,9 +925,9 @@ sub simulate()
     if (defined $capacity) {
         # factor out $load_scale for optimizing the inner loop
         $capacity /= $load_scale_never_0;
-        $bypass   /=  $load_scale_never_0 if defined $bypass;
-        $soc_max /= $load_scale_never_0;
-        $soc_min /= $load_scale_never_0;
+        $bypass   /= $load_scale_never_0 if defined $bypass;
+        $soc_max  /= $load_scale_never_0;
+        $soc_min  /= $load_scale_never_0;
         $soc = $soc_min;
     }
     my $max_feed_scaled_by_eff = $max_feed / ($load_scale_never_0
@@ -1009,7 +1008,7 @@ sub simulate()
         my $hgrid_feed = 0;
         my ($hcharge_delta, $hdischg_delta) = (0, 0) if $capacity;
         my $curb_losses_this_hour = 0;
-        my $AC_coupling_losses_this_hour = 0; # TODO calc AC losses on charge side
+        my $AC_cpl_losses_this_hour = 0;
         my $items = $items_by_hour[$month][$day][$hour];
 
         # factor out $items for optimizing the inner loop
@@ -1169,7 +1168,7 @@ sub simulate()
                         my $discharge_net = $discharge * $inverter_eff;
                         if ($AC_coupled) {
                             $AC_loss = $discharge - $discharge_net;
-                            $AC_coupling_losses_this_hour += $AC_loss;
+                            $AC_cpl_losses_this_hour += $AC_loss;
                         }
                         if (defined $max_feed_scaled_by_eff && $const_feed) {
                             # $feed_sum += $discharge;
@@ -1225,7 +1224,7 @@ sub simulate()
         $curb_losses_this_hour /= $items;
         $PV_use_loss[$month][$day][$hour] += $curb_losses_this_hour;
         $PV_use_loss_sum += $curb_losses_this_hour;
-        $AC_coupling_losses += $AC_coupling_losses_this_hour / $items;
+        $AC_cpl_losses += $AC_cpl_losses_this_hour / $items;
         # $sum_needed += $needed / $items; # per hour
         # print "$year-".time_string($year_, $month, $day, $hour, $minute).
         # "\tPV=".round($pvnet_power)."\tPN=".round($needed)."\tPU=".round($usages).
@@ -1300,7 +1299,7 @@ sub simulate()
         $dischg_sum *= $load_scale / $years;
         $charging_loss *= $load_scale / $years;
         $spill_loss *= $load_scale / $years;
-        $AC_coupling_losses *= $load_scale / $years;
+        $AC_cpl_losses *= $load_scale / $years;
         $PV_used_via_storage *= $load_scale / $years;
     }
 }
@@ -1385,6 +1384,7 @@ my $ieff_txt         = $en ?"inverter efficiency":"Wechselrichter-Wirkungsgrad";
 my $stored_txt       = $en ? "buffered energy"      : "Zwischenspeicherung";
 my $spill_loss_txt   = $en ? "loss by spill"        : "Verlust durch Überlauf";
 my $AC_coupl_loss_txt= $en ? "loss by AC coupling" :"Verlust durch AC-Kopplung";
+my $AC_coupl_loss_cmt= $en ? "at discharge inverter": "im WR auf Entladeseite";
 my $charging_loss_txt= $en ? "charging loss"        : "Ladeverlust";
 my $storage_loss_txt = $en ? "storage loss"         : "Speicherverlust";
 my $cycles_txt       = $en ? "full cycles per year" : "Vollzyklen pro Jahr";
@@ -1415,7 +1415,7 @@ if (defined $capacity) { # also for future loss when discharging the rest:
     $cycles = round($charge_sum / ($soc_max - $soc_min)) if $capacity !=0;
     # future losses:
     $soc *= $storage_eff;
-    $AC_coupling_losses += $soc * (1 - $inverter_eff) if $AC_coupled;
+    $AC_cpl_losses += $soc * (1 - $inverter_eff) if $AC_coupled;
     $soc *= $inverter_eff;
 }
 
@@ -1466,14 +1466,15 @@ sub save_statistics {
             .(defined $max_feed ? $max_feed : "").",$max_disrate,"
             ."$charge_eff,$storage_eff,"
             .(percent($max_soc) / 100).",".(percent($max_dod) / 100)."\n";
-        print $OU "".($AC_coupled ? "$AC_coupl_loss_txt in kWh": $coupled_txt)
-            .",$spill_loss_txt in kWh,"
+        print $OU "$spill_loss_txt in kWh,"
             ."$charging_loss_txt in kWh,$storage_loss_txt in kWh,"
-            ."$own_storage_txt in kWh,$stored_txt in kWh,"
+            .($AC_coupled ?
+              "$AC_coupl_loss_txt $AC_coupl_loss_cmt in kWh" : $coupled_txt)
+            .",$own_storage_txt in kWh,$stored_txt in kWh,"
             ."$cycles_txt $of_eff_cap_txt\n";
-        print $OU "".($AC_coupled ? round_1000($AC_coupling_losses) : "").","
-            .round_1000($spill_loss).","
+        print $OU "".round_1000($spill_loss).","
             .round_1000($charging_loss).",".round_1000($storage_loss).","
+            .($AC_coupled ? round_1000($AC_cpl_losses) : "").","
             .round_1000($PV_used_via_storage).",".round_1000($charge_sum)
             .",$cycles\n";
     }
@@ -1692,13 +1693,13 @@ if (defined $capacity) {
     print "$feed_txt $en3        ".($const_feed ? "" : " ")
         ."=".W($max_feed)."$feed_during_txt" if defined $max_feed;
     print ", $max_disrate_txt $max_disrate C\n";
-    print "$AC_coupl_loss_txt $en3$en3  =" .kWh($AC_coupling_losses)."\n"
-        if $AC_coupled;
     print "$spill_loss_txt $en3 $en3 $en3   =".kWh($spill_loss)."\n";
     print "$charging_loss_txt $de2              =".kWh($charging_loss)
         ." $due_to $ceff_txt ".percent($charge_eff)."%\n";
     print "$storage_loss_txt $en3            =".kWh($storage_loss)
         ." $due_to $seff_txt ".percent($storage_eff)."%\n";
+    print "$AC_coupl_loss_txt $en3$en3  =" .kWh($AC_cpl_losses)
+        ." $AC_coupl_loss_cmt\n" if $AC_coupled;
     print "$own_storage_txt $en2   =".kWh($PV_used_via_storage)."\n";
     if ($verbose && defined $capacity) {
         print "$c_txt$de2= @charge_per_hour[0..23]\n";
@@ -1708,13 +1709,13 @@ if (defined $capacity) {
     # Vollzyklen, Kapazitätsdurchgänge pro Jahr Kapazitätsdurchsatz:
     printf "$cycles_txt $de1       =  %3d $of_eff_cap_txt\n", $cycles;
 
-    my $grid_feed_sum_alt = $PV_net_sum - $PV_used_sum - $AC_coupling_losses
+    my $grid_feed_sum_alt = $PV_net_sum - $PV_used_sum - $AC_cpl_losses
         - $spill_loss - $charging_loss - $storage_loss - $soc;
     my $discrepancy = $grid_feed_sum - $grid_feed_sum_alt;
     die "Internal error: grid feed-in calculation discrepancy $discrepancy: ".
         "grid feed-in $grid_feed_sum vs. ".int($grid_feed_sum_alt + .5)." =\n".
         "PV net sum $PV_net_sum - PV used $PV_used_sum".
-        " - AC coupling loss $AC_coupling_losses - loss by spill $spill_loss".
+        " - AC coupling loss $AC_cpl_losses - loss by spill $spill_loss".
         " - charging loss $charging_loss - storage loss $storage_loss".
         " - charge $soc" if abs($discrepancy) > 0.001; # 1 mWh
     print "\n";

@@ -333,7 +333,9 @@ if (defined $capacity) {
     die "-feed option requires -capacity option" if defined $max_feed;
     die "-ceff option requires -capacity option" if defined $charge_eff;
     die "-seff option requires -capacity option" if defined $storage_eff;
+    $AC_coupled = 0;
 }
+my $DC_coupled = defined $capacity && !$AC_coupled;
 
 sub never_0 { return $_[0] == 0 ? 1 : $_[0]; }
 my $pvsys_eff_never_0;
@@ -819,6 +821,7 @@ sub get_power {
         $PV_gross[$year][$month][$day][$hour] += $gross_power;
         $net_power = $gross_power * $net_rate;
         $net_power = $limit if $limit != 0 && $net_power > $limit;
+        # TODO adapt loss calcuation (so far only on curb) accordingly
         $PV_net[$year][$month][$day][$hour] += $net_power;
 
         $hours++;
@@ -872,17 +875,17 @@ my $PV_gross_max = 0;
 my $PV_gross_max_time;
 my $PV_gross_sum = 0;
 
-my @pv_loss; # by curb
-my $pv_losses = 0;
-my $pv_loss_hours = 0;
+my @pv_loss           if $curb;
+my $pv_losses     = 0 if $curb;
+my $pv_loss_hours = 0 if $curb;
 my $PV_net_max = 0;
 my $PV_net_max_time;
 my $PV_net_sum = 0;
 
-my @PV_use_loss_by_item;
-my @PV_use_loss;
-my $PV_use_loss_sum = 0;
-my $PV_use_loss_hours = 0;
+my @PV_use_loss_by_item   if $curb;
+my @PV_use_loss           if $curb;
+my $PV_use_loss_sum   = 0 if $curb;
+my $PV_use_loss_hours = 0 if $curb;
 my @PV_used_by_item;
 my @PV_used;
 my $PV_used_sum = 0;
@@ -944,8 +947,8 @@ sub simulate()
         unless $test;
     while ($year < $end_year) {
         my $year_ = $tmy ? "TMY (2008..2020)" : $start_year + $year;
-        $pv_loss    [$month][$day][$hour] = 0 if $year == 0;
-        $PV_use_loss[$month][$day][$hour] = 0 if $year == 0;
+        $pv_loss    [$month][$day][$hour] = 0 if $curb && $year == 0;
+        $PV_use_loss[$month][$day][$hour] = 0 if $curb && $year == 0;
 
         # restrict simulation to month, day, and hour given by the -only option
         if ((defined $sel_month) && $sel_month ne "*" && $month != $sel_month ||
@@ -978,11 +981,13 @@ sub simulate()
         $PV_gross_sum += $gross_power;
 
         my $PV_loss = 0;
-        if ($curb && $pvnet_power > $curb) { # TODO adapt to storage use
+        if ($curb && $pvnet_power > $curb) {
             $PV_loss = $pvnet_power - $curb;
-            $pv_loss[$month][$day][$hour] += $PV_loss;
-            $pv_losses += $PV_loss;
-            $pv_loss_hours++;
+            unless ($DC_coupled) {
+                $pv_loss[$month][$day][$hour] += $PV_loss;
+                $pv_losses += $PV_loss;
+                $pv_loss_hours++;
+            }
             $PV_net[$year][$month][$day][$hour] = $pvnet_power = $curb;
             # print "$year-".time_string($year_, $month, $day, $hour, $minute).
             #"\tPV=".round($pvnet_power)."\tcurb=".round($curb).
@@ -995,17 +1000,29 @@ sub simulate()
         $PV_net_sum += $pvnet_power;
 
         ##### at this point, $pvnet_power is the main input for simulation ####
-        ##### $PV_loss is upper limit for PV usage loss computation if $curb
+        ##### $PV_loss is upper limit for PV net usage loss computation on $curb
+        ##### $gross_power is used only with DC-coupled charging
 
         # factor out $load_scale for optimizing the inner loop
+        $gross_power /= $load_scale_never_0 if $DC_coupled;
         $pvnet_power /= $load_scale_never_0;
-        $PV_loss     /= $load_scale_never_0 if $curb;
+        $PV_loss     /= $load_scale_never_0 if $PV_loss != 0; # implies $curb
+
+        my $PV_loss_with_capacity;
+        if (defined $capacity && $PV_loss != 0) {
+            $PV_loss_with_capacity = $PV_loss * $charge_eff * $storage_eff;
+            $PV_loss_with_capacity *= $inverter_eff if $AC_coupled;
+
+            # just approximate if defined $capacity:
+            $PV_loss *= $charge_eff * $storage_eff * $inverter_eff
+                if defined $bypass && $bypass < $PV_loss;
+        }
 
         # my $needed = 0;
         my $usages = 0;
         my $hgrid_feed = 0;
         my ($hcharge_delta, $hdischg_delta) = (0, 0) if $capacity;
-        my $pv_use_losses = 0; # due to curb in current hour
+        my $pv_use_losses = 0 if $curb;
         my $AC_cpl_losses_this_hour = 0;
         my $items = $items_by_hour[$month][$day][$hour];
 
@@ -1035,7 +1052,7 @@ sub simulate()
             my $grid_feed_in = 0;
 
             # $pv_used locally accumulates PV own consumption
-            # feed by constant bypass or just as much as used (optimal charge)
+            # feed by constant bypass or just as much as needed (optimal charge)
             my $pv_used = defined $bypass ? $bypass : $load; # preliminary
             my $power_missing = 0; # potential usage losses due to curb
             my $excess_power = $pvnet_power - $pv_used;
@@ -1044,27 +1061,37 @@ sub simulate()
                 $pv_used = $pvnet_power;
                 # == min($pvnet_power, defined $bypass ? $bypass : $load)
             }
-            if (defined $bypass) {
-                my $unused_bypass = $pv_used - $load;
+            my $unused_bypass = 0;
+            if (defined $bypass) { # implies defined $capacity
+                $unused_bypass = $pv_used - $load;
                 if ($unused_bypass > 0) {
                     $pv_used = $load;
-                    $grid_feed_in += $unused_bypass;
+                    $grid_feed_in = $unused_bypass;
+                    $power_missing = 0;
                 } else {
-                    $power_missing = -$unused_bypass if $curb;
+                    $unused_bypass = 0;
                 }
-                printf("bypass feed=%4d,used=%4d ",
-                       max($unused_bypass, 0) + .5, $pv_used + .5)
-                    if $test_started;
+                printf("bypass grid=%4d,used=%4d ",
+                       $unused_bypass + .5, $pv_used + .5) if $test_started;
             }
             my $power_needed = $load - $pv_used;
 
+            my $PV_loss_curr = $PV_loss if $PV_loss != 0;
             if (defined $capacity) { # storage present
+                $PV_loss_curr = $PV_loss_with_capacity
+                    if $PV_loss != 0 && $power_missing == 0;
+                # when charging is DC-coupled, no loss through inverter:
+                $excess_power = $gross_power * $pvsys_eff
+                    - ($pv_used + $grid_feed_in) / $inverter_eff_never_0
+                    if $DC_coupled;
+
                 my $capacity_to_fill = $soc_max - $soc;
                 $capacity_to_fill = 0 if $capacity_to_fill < 0;
                 my ($charge_input, $charge_delta) = (0, 0);
+                my $test_blank_no_surplus = " " x
+                    (defined $bypass ? ($bypass_spill || $AC_coupled ? 28 : 16)
+                                     : 18) if $test_started;
                 if ($excess_power > 0) {
-                    # when charging is DC-coupled, no loss through inverter:
-                    $excess_power /= $inverter_eff_never_0 unless $AC_coupled;
                     # $excess_power is the power available for charging
 
                     my $need_for_fill = $capacity_to_fill / $charge_eff_never_0;
@@ -1085,14 +1112,14 @@ sub simulate()
                         $charge_input = $limited_fill;
                         my $surplus_net = $surplus;
                         # when DC-coupled, need to transform surplus back to net
-                        $surplus_net *= $inverter_eff unless $AC_coupled;
+                        $surplus_net *= $inverter_eff if $DC_coupled;
 
                         if (!defined $bypass) { # i.e., on optimal charge
                             $grid_feed_in += $surplus_net;
-                            printf("grid feed=%4d ", $surplus_net + .5)
+                            printf("surplus feed=%4d ", $surplus_net + .5)
                                 if $test_started;
                         } elsif ($bypass_spill || $AC_coupled) {
-                            my $remaining_surplus = $surplus_net - $power_needed;
+                            my $remaining_surplus = $surplus_net -$power_needed;
                             my $used_surplus = $power_needed;
                             if ($remaining_surplus < 0) {
                                 $used_surplus = $surplus_net;
@@ -1101,32 +1128,32 @@ sub simulate()
                             $pv_used += $used_surplus;
                             $power_needed -= $used_surplus;
                             $grid_feed_in += $remaining_surplus;
-                            printf("spill feed=%4d,used=%4d ",
-                                   max($remaining_surplus, 0) + .5,
-                                   $used_surplus + .5) if $test_started;
+                            printf("surplus feed=%4d,used=%4d ",
+                                   $remaining_surplus + .5, $used_surplus + .5)
+                                if $test_started;
                         } else {
-                            # defined $bypass && !$bypass_spill && !$AC_coupled
+                            # defined $bypass && !$bypass_spill && $DC_coupled
                             $spill_loss += $surplus_net;
-                            printf("spill loss=%4d           ",$surplus_net +.5)
+                            printf("spill loss=%4d ", $surplus_net +.5)
                                 if $test_started;
                         }
                     } elsif ($test_started) {
-                        printf(" " x (defined $bypass ? 26: 15)); # no surplus
+                        printf($test_blank_no_surplus);
                     }
 
-                    # Adds reduced charging due to curb (can be if $AC_coupled)
-                    # to potential usage losses, which is not entirely correct
-                    # in case of constant feed (non-optimal discharge).
+                    # add reduced charging due to curb to potential usage losses
+                    # - well, this is just approximate:
                     $power_missing +=
                         $capacity_to_fill * $storage_eff * $inverter_eff
-                        if $AC_coupled && $PV_loss != 0; # implies $curb
+                        if $AC_coupled && $PV_loss != 0 # implies $curb
+                        && $unused_bypass == 0;
 
                     $charge_delta = $charge_input * $charge_eff;
                     $soc += $charge_delta;
                     $charging_loss += $charge_input - $charge_delta;
                 } elsif ($test_started) {
                     printf(" " x 39); # no $excess_power
-                    printf(" " x (defined $bypass ? 26: 15)); # no surplus
+                    printf($test_blank_no_surplus);
                 }
                 my $print_charge = $test_started &&
                     ($excess_power > 0 || $soc > $soc_min);
@@ -1135,6 +1162,12 @@ sub simulate()
                        ($AC_coupled ? 1 : $inverter_eff) + .5,
                        $power_needed + .5, $soc - $charge_delta + .5,
                        $charge_delta + .5) if $print_charge;
+
+                ## add reduced discharging due to curb to potential usage losses
+                ## - well, this would be just approximate:
+                #$power_missing +=
+                #    $power_needed / $charge_eff_never_0 / $storage_eff_never_0
+                #    if $unused_bypass == 0 && $PV_loss != 0; # implies $curb
 
                 my $dischg_delta = 0;
                 my $AC_loss = 0;
@@ -1187,6 +1220,10 @@ sub simulate()
                         }
                         $pv_used += $discharge_net;
                         $PV_used_via_storage += $discharge_net;
+                        # reduce potential usage losses by discharge
+                        # - well, this is be just approximate:
+                        $power_missing -= $discharge_net if $unused_bypass == 0
+                            && $PV_loss != 0; # implies $curb
                     }
                 } else {
                     print "                   " if $test_started;
@@ -1208,8 +1245,10 @@ sub simulate()
                 $grid_feed_in = $excess_power;
             }
 
-            printf("used=%4d feed=%4d\n", $pv_used + .5,
-                $grid_feed_in + .5) if $test_started;
+            if ($test_started) {
+                printf("used=%4d feed=%4d", $pv_used + .5, $grid_feed_in + .5);
+                printf(" missing=%4d", $power_missing + .5) if $PV_loss != 0;
+            }
             $usages += $pv_used;
             $hgrid_feed += $grid_feed_in;
             if ($max) {
@@ -1217,19 +1256,25 @@ sub simulate()
                 $grid_feed_by_item[$month][$day][$hour][$item] += $grid_feed_in;
             }
 
-            if ($PV_loss != 0 && $power_missing != 0) { # implies $curb
-                $PV_loss = $power_missing if $power_missing < $PV_loss;
-                $PV_use_loss_by_item[$month][$day][$hour][$item] += $PV_loss
-                    if $max;
-                $pv_use_losses += $PV_loss;
+            if ($PV_loss != 0 && $power_missing > 0) { # implies $curb
+                # just approximate if defined $capacity
+                my $l = min($PV_loss_curr, $power_missing);
+                $PV_use_loss_by_item[$month][$day][$hour][$item] += $l if $max;
+                $pv_use_losses += $l;
                 $PV_use_loss_hours++; # will be normalized by $sum_items
+                printf(" curb loss=%4d", $l + .5) if $test_started;
+            } elsif ($PV_loss != 0 && $max) {
+                $PV_use_loss_by_item[$month][$day][$hour][$item] += 0;
             }
+            printf "\n" if $test_started;
         }
         # $spill_loss += ($pvnet_power - $feed_sum / $items) if defined $bypass;
 
-        $pv_use_losses /= $items;
-        $PV_use_loss[$month][$day][$hour] += $pv_use_losses;
-        $PV_use_loss_sum += $pv_use_losses;
+        if ($curb) {
+            $pv_use_losses /= $items;
+            $PV_use_loss[$month][$day][$hour] += $pv_use_losses;
+            $PV_use_loss_sum += $pv_use_losses;
+        }
         $AC_cpl_losses += $AC_cpl_losses_this_hour / $items;
         # $sum_needed += $needed / $items; # per hour
         # print "$year-".time_string($year_, $month, $day, $hour, $minute).
@@ -1280,12 +1325,12 @@ sub simulate()
 
     # average sums over $years:
     $PV_gross_sum /= $years;
-    $pv_losses /= $years;
-    $pv_loss_hours /= $years;
+    $pv_losses /= $years     if $curb;
+    $pv_loss_hours /= $years if $curb;
     $PV_net_sum /= $years;
-    $PV_use_loss_hours /= ($sum_items / YearHours * $years);
+    $PV_use_loss_hours /= ($sum_items / YearHours * $years) if $curb && !$test;
     # also undo: factor out $load_scale for optimizing the inner loop
-    $PV_use_loss_sum *= $load_scale / $years;
+    $PV_use_loss_sum *= $load_scale / $years if $curb;
     $PV_used_sum *= $load_scale / $years;
     $grid_feed_sum *= $load_scale / $years;
     # $sum_needed *= $load_scale;
@@ -1349,7 +1394,10 @@ my $load_during_txt  =($load_days == 7 ? "" :
                            : " von $load_from bis $load_to Uhr"))
                       if defined $load_const;
 my $usage_loss_txt   = $en ? "$own_txt net loss"    :  $own_txt."sverlust";
-my $net_de           = $en ? ""                     : " netto";
+my $net_appr         = $en ? "net"                  : "netto";
+$net_appr           .=($en ?" - just approximately -":" - nur näherungsweise -")
+    if defined $capacity
+    && ($AC_coupled || (!defined $bypass || ($bypass != 0 || $bypass_spill)));
 my $by_curb   = $en ? "by inverter output curb" : "durch WR-Ausgangsdrosselung";
 my $with             = $en ? "with"                 : "mit";
 my $without          = $en ? "without"              : "ohne";
@@ -1418,7 +1466,8 @@ if (defined $capacity) { # also for future loss when discharging the rest:
     }
     $storage_loss = $charge_sum * (1 - $storage_eff);
     $storage_loss *= $inverter_eff unless $AC_coupled;
-    $cycles = round($charge_sum / ($soc_max - $soc_min)) if $capacity !=0;
+    $cycles = round($charge_sum / ($soc_max - $soc_min)) if $capacity != 0;
+    $cycles-- if $soc > $soc_min;
     # future losses:
     $soc *= $storage_eff;
     $AC_cpl_losses += $soc * (1 - $inverter_eff) if $AC_coupled;
@@ -1498,7 +1547,7 @@ sub save_statistics {
     my $sum_avg = $sum_txt . ($years > 1 ? " $on_average_txt" : "");
     print $OU "$yearly_txt,$PV_gross_txt,"
         .($curb ? "$PV_loss_txt $by_curb," : "")."$PV_net_txt,"
-        .($curb ? "$usage_loss_txt$net_de $by_curb,": "")
+        .($curb ? "$usage_loss_txt $net_appr $by_curb,": "")
         ."$own_txt,$grid_feed_txt,$consumpt_txt"
         .(defined $capacity ? ",$charge_txt,$dischg_after_txt" : "")
         ."\n";
@@ -1559,11 +1608,11 @@ sub save_statistics {
             $net_across += $PV_net[$year][$month][$day][$hour];
         }
         $gross   += $gross_across;
-        $PV_loss += $pv_loss[$month][$day][$hour];
+        $PV_loss += $pv_loss[$month][$day][$hour] if $curb;
         $net     += $net_across;
         if (!$max) {
             $hload   +=        $load[$month][$day][$hour];
-            $loss    += $PV_use_loss[$month][$day][$hour];
+            $loss    += $PV_use_loss[$month][$day][$hour] if $curb;
             $used    += $PV_used    [$month][$day][$hour];
             $feed    += $grid_feed  [$month][$day][$hour];
             if (defined $capacity) {
@@ -1600,7 +1649,8 @@ sub save_statistics {
                     $minute = minute_string($i, $items);
                     $hload =              $load_item[$mon_][$day_][$hour_][$i];
                     if ($net_across != 0) {
-                        $loss = $PV_use_loss_by_item[$mon_][$day_][$hour_][$i];
+                        $loss = $PV_use_loss_by_item[$mon_][$day_][$hour_][$i]
+                            if $curb;
                         $used = $PV_used_by_item    [$mon_][$day_][$hour_][$i];
                         $feed =   $grid_feed_by_item[$mon_][$day_][$hour_][$i];
                     } else {
@@ -1714,6 +1764,8 @@ if (defined $capacity) {
     # Vollzyklen, Kapazitätsdurchgänge pro Jahr Kapazitätsdurchsatz:
     printf "$cycles_txt $de1       =  %3d $of_eff_cap_txt\n", ($cycles + .5);
 
+    $PV_net_sum = $PV_gross_sum * $pvsys_eff * $inverter_eff
+        if defined $capacity && !$AC_coupled;
     my $grid_feed_sum_alt = $PV_net_sum - $PV_used_sum - $AC_cpl_losses
         - $spill_loss - $charging_loss - $storage_loss - $soc;
     my $discrepancy = $grid_feed_sum - $grid_feed_sum_alt;
@@ -1722,12 +1774,12 @@ if (defined $capacity) {
         "PV net sum $PV_net_sum - PV used $PV_used_sum".
         " - AC coupling loss $AC_cpl_losses - loss by spill $spill_loss".
         " - charging loss $charging_loss - storage loss $storage_loss".
-        " - charge $soc" if abs($discrepancy) > 0.001; # 1 mWh
+        " - SoC $soc" if abs($discrepancy) > 0.001; # 1 mWh
     print "\n";
 }
 
 print "$own_txt $en4 $en3         =" .kWh($PV_used_sum)."\n";
-print "$usage_loss_txt $en3$en3  =" .kWh($PV_use_loss_sum)."$net_de $during "
+print "$usage_loss_txt $en3$en3  =" .kWh($PV_use_loss_sum)." $net_appr $during "
     .round($PV_use_loss_hours)." h $by_curb_at $curb W\n" if $curb;
 print "$grid_feed_txt $en3            =" .kWh($grid_feed_sum)."\n";
 print "$F_txt = @grid_feed_per_hour[0..23]\n" if $verbose;

@@ -316,7 +316,7 @@ die "-only option does not have form (*|YYYY)[-(*|MM)[-(*|DD)[:(*|HH)]]]"
     if $date &&
     !($date =~ m/^(\*|\d\d?\d?\d?)(-(\*|\d\d?)(-(\*|\d\d?)(:(\*|\d\d?))?)?)?$/);
 my ($sel_year, $sel_month, $sel_day, $sel_hour) = ($1, $3, $5, $7) if $date;
-die "with -tmy, the year given with the -only option must be '*'"
+die "With -tmy, the year given with the -only option must be '*'"
     if $tmy && defined $sel_year && $sel_year ne "*";
 
 die "Missing load profile file name - should be first CLI argument"
@@ -400,7 +400,12 @@ sub kWh     {
     return sprintf("%5d kWh", round_1000($val));
 }
 sub W       { return sprintf("%5d W"  , round(shift)); }
-sub percent { return round(shift() * 100); }
+sub percent {
+    my $val = shift() * 100;
+    die "Percentage value $val is out of range 0..100"
+        unless 0 <= $val && $val <= 100;
+    return round($val);
+}
 sub round_percent { return percent(shift) / 100; }
 sub SUM     { my ($I, $i, $j) = (shift, shift, shift);
               my $div = $max ? "/1000" : "";
@@ -815,7 +820,7 @@ sub get_power {
             $pvsys_eff = $pvsys_eff_deflt unless defined $pvsys_eff;
             if ($pvsys_eff < 0 || $pvsys_eff > 1) {
                 print "\n"; # close line started with print "$pv_data_txt..."
-                die "unreasonable PV system efficiency ".percent($pvsys_eff)
+                die "Unreasonable PV system efficiency ".percent($pvsys_eff)
                     ."% - have -peff and -ieff been used properly?";
             }
             print ", assuming that PV data is net (after PV system and "
@@ -876,7 +881,7 @@ sub get_power {
 
     check_consistency($years, $current_years, "years", $file) if $years;
     $years = $current_years;
-    die "number of years detected is $years in $file"
+    die "Number of years detected is $years in $file"
         if $years < 1 || $years > 100;
     check_consistency($months,       12 * $years, "months", $file);
     check_consistency($hours, YearHours * $years, "hours", $file)
@@ -960,7 +965,7 @@ my $dischg_sum    = 0 if defined $capacity;
 my $spill_loss    = 0 if defined $capacity;
 my $charging_loss = 0 if defined $capacity;
 my $storage_loss  = 0 if defined $capacity;
-my $AC_cpl_losses = 0 if defined $capacity;
+my $coupling_loss = 0 if defined $capacity;
 
 sub simulate()
 {
@@ -983,7 +988,7 @@ sub simulate()
     # restrict simulation to year optionally given by the -only option
     if (defined $sel_year && $sel_year ne "*") {
         $year = $sel_year - $start_year;
-        die "year given with -only option must be in range $start_year..".
+        die "Year given with -only option must be in range $start_year..".
             ($start_year + $years - 1) if $year < 0 || $year >= $years;
         ($years, $end_year) = (1, $year + 1);
     }
@@ -1318,7 +1323,7 @@ sub simulate()
             $PV_use_loss[$month][$day][$hour] += $pv_use_losses;
             $PV_use_loss_sum += $pv_use_losses;
         }
-        $AC_cpl_losses += $AC_cpl_losses_this_hour / $items if $AC_coupled;
+        $coupling_loss += $AC_cpl_losses_this_hour / $items if $AC_coupled;
         # $sum_needed += $needed / $items; # per hour
         # print "".time_string($year_, $month, $day, $hour, $minute).
         # "\tPV=".round($pvnet_power)."\tPN=".round($needed)."\tPU=".round($usages).
@@ -1394,13 +1399,13 @@ sub simulate()
         $soc -= $soc_min;
         $soc_max *= $load_scale_never_0;
         $soc_min *= $load_scale_never_0;
-        $soc        *= $load_scale;
+        $soc     *= $load_scale;
         # also average storage-related sums over $years:
-        $charge_sum *= $load_scale / $years;
-        $dischg_sum *= $load_scale / $years;
-        $charging_loss *= $load_scale / $years;
-        $spill_loss *= $load_scale / $years;
-        $AC_cpl_losses *= $load_scale / $years if $AC_coupled;
+        $charge_sum          *= $load_scale / $years;
+        $dischg_sum          *= $load_scale / $years;
+        $charging_loss       *= $load_scale / $years;
+        $spill_loss          *= $load_scale / $years;
+        $coupling_loss       *= $load_scale / $years if $AC_coupled;
         $PV_used_via_storage *= $load_scale / $years;
     }
 }
@@ -1426,14 +1431,18 @@ my $due_to           = $en ? "due to"               : "durch";
 my $because          = $en ? "because"              : "weil";
 my $gross_max_txt    = $en ? "max gross PV power"   : "Max. PV-Bruttoleistung";
 my $net_max_txt      = $en ? "max net PV power"     : "Max. PV-Nettoleistung";
-my $curb_txt    = $en ? "inverter output power curb": "WR-Ausgangs-Drosselung";
+my $curb_txt         = $en ? "inverter output curb" : "WR-Ausgangs-Drosselung";
 my $pvsys_eff_txt    = $en ? "PV system efficiency" : "PV-System-Wirkungsgrad";
 my $own_txt          = $en ? "PV own use"           : "PV-Eigenverbrauch";
 my $own_ratio_txt    = $own_txt . ($en ? " ratio"  : "santeil");
 my $own_storage_txt  = $en ?"PV own use via storage":"PV-Nutzung über Speicher";
 my $load_cover_txt   = $en ? "use coverage ratio"   : "Eigendeckungsanteil";
 my $PV_gross_txt     = $en ? "PV gross yield"       : "PV-Bruttoertrag";
+my $PV_DC_txt        = $en ? "PV DC yield"          : "PV-DC-Ertrag";
 my $PV_net_txt       = $en ? "PV net yield"         : "PV-Nettoertrag";
+my $PV_txt   = $DC_coupled ? $PV_DC_txt             : $PV_net_txt;
+my $of_yield         = $en ? "of $PV_txt"     :"des $PV_txt"."s (Nutzungsgrad)";
+my $of_consumption   = $en ? "of consumption" : "des Verbrauchs (Autarkiegrad)";
 my $PV_loss_txt      = $en ? "PV yield net loss"    : "PV-Netto-Ertragsverlust";
 my $load_const_txt   = $en ? "constant load"        : "Konstante Last";
 my $load_during_txt  =($load_days == 7 ? "" :
@@ -1448,7 +1457,8 @@ my $net_appr         = $en ? "net"                  : "netto";
 $net_appr           .=($en ?" - just approximately -":" - nur näherungsweise -")
     if defined $capacity
     && ($AC_coupled || (!defined $bypass || ($bypass != 0 || $bypass_spill)));
-my $by_curb   = $en ? "by inverter output curb" : "durch WR-Ausgangsdrosselung";
+my $by_txt           = $en ? "by"                   : "durch";
+my $by_curb = "$by_txt $curb_txt";
 my $with             = $en ? "with"                 : "mit";
 my $without          = $en ? "without"              : "ohne";
 my $grid_feed_txt    = $en ? "grid feed-in"         : "Netzeinspeisung";
@@ -1488,7 +1498,8 @@ my $ieff2_txt        = $en ? "discharge inverter efficiency"
                            : "Entlade-WR-Wirkungsgrad";
 my $stored_txt       = $en ? "buffered energy"      : "Zwischenspeicherung";
 my $spill_loss_txt   = $en ? "loss by spill"        : "Verlust durch Überlauf";
-my $AC_coupl_loss_txt= $en ? "loss by AC coupling" :"Verlust durch AC-Kopplung";
+my $AC_coupl_loss_txt= $en ? "loss with AC coupling":"Verlust mit AC-Kopplung";
+my $DC_coupl_loss_txt= $en ?"loss during discharge":"Verlust während Entladung";
 my $charging_loss_txt= $en ? "charging loss"        : "Ladeverlust";
 my $storage_loss_txt = $en ? "storage loss"         : "Speicherverlust";
 my $cycles_txt       = $en ? "full cycles" : "Vollzyklen";
@@ -1500,8 +1511,11 @@ my $P_txt = $en ? "average PV power each hour"  : "Mittlere PV-Leistung je Std";
 my $F_txt = $en ? "average grid feed each hour" : "Mittlere Einspeisung je Std";
 my $dischg_after_txt = "$dischg_txt $after $storage_loss_txt";
 
-my $own_ratio = round_percent($PV_net_sum ? $PV_used_sum/$PV_net_sum:0);
-my $load_cover= round_percent($sel_load_sum ? $PV_used_sum / $sel_load_sum : 0);
+my $PV_DC_sum = $PV_gross_sum * $pvsys_eff;
+my $PV_sum = $DC_coupled ? $PV_DC_sum : $PV_net_sum;
+my $coupl_loss_txt = $AC_coupled ? $AC_coupl_loss_txt : $DC_coupl_loss_txt;
+my $own_ratio = round_percent($PV_sum ? $PV_used_sum / $PV_sum : 1);
+my $load_cover= round_percent($sel_load_sum ? $PV_used_sum / $sel_load_sum : 1);
 my $cycles = 0;
 if (defined $capacity) { # also for future loss when discharging the rest:
     $charging_loss *= $inverter2_eff if $DC_coupled;
@@ -1519,7 +1533,11 @@ if (defined $capacity) { # also for future loss when discharging the rest:
     $cycles-- if $soc > $soc_min;
     # future losses:
     $soc *= $storage_eff;
-    $AC_cpl_losses += $soc * (1 - $inverter2_eff) if $AC_coupled;
+    if ($AC_coupled) {
+        $coupling_loss += $soc * (1 - $inverter2_eff);
+    } else {
+        $coupling_loss = $PV_gross_sum * $pvsys_eff * (1 - $inverter2_eff);
+    }
     $soc *= $inverter2_eff;
 }
 
@@ -1548,17 +1566,18 @@ sub save_statistics {
     print $OU "$nominal_txt in Wp,$limit_txt in W $none_txt,"
         ."$gross_max_txt in W $PV_gross_max_time,"
         ."$net_max_txt in W $PV_net_max_time,"
-        ."$curb_txt in W,$pvsys_eff_txt,$ieff_txt,"
-        ."$own_ratio_txt,$load_cover_txt,";
+        ."$curb_txt in W,$pvsys_eff_txt,$PV_DC_txt,$ieff_txt,"
+        ."$own_ratio_txt $of_yield,$load_cover_txt $of_consumption,";
     print $OU ",$D_txt:,".join(",", @load_dist) if defined $load_dist;
     print $OU "\n$nominal_sum,$limits_sum,".round($PV_gross_max).","
         .round($PV_net_max).",".($curb ? $curb : $en ? "none" : "keine").","
-        .round_percent($pvsys_eff).",$inverter_eff,$own_ratio,$load_cover,";
+        .round_percent($pvsys_eff).",$PV_DC_sum,$inverter_eff,"
+        ."$own_ratio,$load_cover,";
     print $OU ",$d_txt:,".join(",", @load_factors) if defined $load_factors;
     print $OU "\n";
 
     if (defined $capacity) {
-        print $OU "$capacity_txt in Wh,"
+        print $OU "$capacity_txt $coupled_txt in Wh,"
             .(defined $bypass ? "$bypass_txt in W$spill_txt" : $optimal_charge)
             .",$max_chgrate_txt in C,"
             .(defined $max_feed ? "$feed_txt in W$feed_during_txt"
@@ -1568,17 +1587,16 @@ sub save_statistics {
             .(defined $bypass ? $bypass : "").",$max_chgrate,"
             .(defined $max_feed ? $max_feed : "").",$max_disrate,"
             ."$charge_eff,$inverter2_eff,"
-            .(percent($max_soc) / 100).",".(percent($max_dod) / 100)
-            .",$storage_eff\n";
+            .(percent($max_soc) / 100).",".(percent($max_dod) / 100).","
+            .(percent($storage_eff) / 100)."\n";
         print $OU "$spill_loss_txt in kWh,"
             ."$charging_loss_txt in kWh,$storage_loss_txt in kWh,"
-            .($AC_coupled ?
-              "$AC_coupl_loss_txt $due_to $ieff2_txt in kWh" : $coupled_txt)
-            .",$own_storage_txt in kWh,$stored_txt in kWh,"
+            ."$coupl_loss_txt $due_to $ieff2_txt in kWh,"
+            ."$own_storage_txt in kWh,$stored_txt in kWh,"
             ."$cycles_txt $of_eff_cap_txt\n";
         print $OU "".round_1000($spill_loss).","
             .round_1000($charging_loss).",".round_1000($storage_loss).","
-            .($AC_coupled ? round_1000($AC_cpl_losses) : "").","
+            .round_1000($coupling_loss).","
             .round_1000($PV_used_via_storage).",".round_1000($charge_sum)
             .",$cycles\n";
     }
@@ -1751,9 +1769,7 @@ save_statistics($seasonly,$season_txt,0, 0, 0, 0, 0, 1);
 my $at             = $en ? "with"                 : "bei";
 my $and            = $en ? "and"                  : "und";
 my $by_curb_at     = $en ? "$by_curb at"          : "$by_curb auf";
-my $yield          = $en ? "yield portion"        : "Ertragsanteil";
-my $of_yield       = $en ? "of net yield"   : "des Nettoertrags (Nutzungsgrad)";
-my $of_consumption = $en ? "of consumption" : "des Verbrauchs (Autarkiegrad)";
+my $yield_portion  = $en ? "yield portion"        : "Ertragsanteil";
 # PV-Abregelungsverlust"
 my $nominal_sum = $#PV_nomin == 0 ? "" : " = $PV_nomin Wp";
 my $limits_sum = $total_limit == 0 ? "" :
@@ -1768,14 +1784,15 @@ if ($verbose) {
     print_arr_perc("$V_txt $per_m$de1        = ", \@PV_by_month,
                    $PV_gross_sum * $years, 1, 12, 1);
 }
-print "$PV_gross_txt $en1            =".kWh($PV_gross_sum).
+print "$PV_gross_txt $en1            =".kWh($PV_gross_sum);
+print "$PV_DC_txt $en2             =" .kWh($PV_DC_sum).
     ", $pvsys_eff_txt ".percent($pvsys_eff)."%\n";
 print "$net_max_txt $en4$en1      =".W($PV_net_max)." $PV_net_max_time\n";
 print "$PV_loss_txt $en2 $en2 $en2  ="       .kWh($pv_losses).
     " $during_txt ".round($pv_loss_hours)." h $by_curb_at $curb W\n" if $curb;
 print "$PV_net_txt $en2             =" .kWh($PV_net_sum).
     " $at $ieff_txt ".percent($inverter_eff)."%\n";
-#print "$yield $daytime  =   $yield_daytime %\n";
+#print "$yield_portion $daytime  =   $yield_daytime %\n";
 #my $yield_daytime =
 #    percent($PV_net_sum ? $PV_net_bright_sum / $PV_net_sum : 0);
 
@@ -1801,9 +1818,8 @@ if (defined $capacity) {
         ." $due_to $ceff_txt ".percent($charge_eff)."%\n";
     print "$storage_loss_txt $en3            =".kWh($storage_loss)
         ." $due_to $seff_txt ".percent($storage_eff)."%\n";
-    print "$AC_coupl_loss_txt $en3$en3  =" .kWh($AC_cpl_losses)." "
-        .($AC_coupled ? "$due_to" : "$because $coupled_txt,")
-        ." $ieff2_txt ".percent($inverter2_eff)."%\n";
+    print "$coupl_loss_txt $en3 $en1 ".($AC_coupled ? "$de2" : "")."=".
+       kWh($coupling_loss)." $due_to $ieff2_txt ".percent($inverter2_eff)."%\n";
     print "$own_storage_txt $en2   =".kWh($PV_used_via_storage)."\n";
     if ($verbose && defined $capacity) {
         print "$c_txt$de2= @charge_per_hour[0..23]\n";
@@ -1825,14 +1841,14 @@ print "$own_ratio_txt $en4 $en4  =  ".sprintf("%3d", percent($own_ratio))
 my $load_cover_str = sprintf("%3d", percent($load_cover));
 print "$load_cover_txt $en1        =  $load_cover_str % $of_consumption\n";
 
-$PV_net_sum = $PV_gross_sum * $pvsys_eff * $inverter2_eff if $DC_coupled;
-my $grid_feed_sum_alt = $PV_net_sum - $PV_used_sum;
-$grid_feed_sum_alt -= $AC_cpl_losses + $spill_loss + $charging_loss
+my $grid_feed_sum_alt = $PV_sum - $PV_used_sum;
+$grid_feed_sum_alt -= $coupling_loss + $spill_loss + $charging_loss
     + $storage_loss + $soc if defined $capacity;
 my $discrepancy = $grid_feed_sum - $grid_feed_sum_alt;
-die "Internal error: calculation discrepancy ".round($discrepancy).": ".
+die "Internal error: calculation discrepancy $discrepancy: ".
     "grid feed-in $grid_feed_sum vs. $grid_feed_sum_alt =\n".
-    "PV net sum $PV_net_sum - PV used $PV_used_sum".(defined $capacity ?
-        " - AC coupling loss $AC_cpl_losses - loss by spill $spill_loss".
-        " - charging loss $charging_loss - storage loss $storage_loss".
+    "PV ".($DC_coupled ? "DC" : "net")." sum "
+    ."$PV_sum - PV used $PV_used_sum".(defined $capacity ?
+        " - loss by spill $spill_loss - charging loss $charging_loss".
+        " - storage loss $storage_loss - coupling loss $coupling_loss".
         " - SoC $soc" : "") if abs($discrepancy) > 0.001; # 1 mWh

@@ -687,7 +687,7 @@ my $D_txt = $en ? "rel. load distr. each hour"  : "Rel. Lastverteilung je Std.";
 my $d_txt = $en ? "load distortions each hour"  : "Last-Verzerrung je Stunde";
 my $l_txt = $en ? "average load each hour"      : "Mittlere Last je Stunde";
 my $t_txt = $en ? "consumption acc. to profile" : "Verbrauch gemäß Lastprofil ";
-my $consumpt_txt= $en ? "consumption by household" : "Verbrauch durch Haushalt";
+my $consumpt_txt= $en ? "consumption" : "Verbrauch";
 my $L_txt = $en ? "load portion"                : "Last-Anteil";
 my $V_txt = $en ? "PV portion"                  : "PV-Anteil";
 my $per3  = $en ? "per 3 hours"                 : "pro 3 Stunden";
@@ -712,8 +712,9 @@ print "$profile_txt$de1$s10 : $load_profile\n" unless $test;
 if ($verbose) {
     print "$p_txt = ".sprintf("%4d", $items_per_hour)."\n";
     print "$t_txt =".kWh($orig_load_sum)."\n";
-    print "$consumpt_txt    =" .kWh($load_sum)." $yearly_txt\n";
-    print "$consumpt_txt    =" .kWh($sel_load_sum)." $load_scope\n" if $date;
+    print "$consumpt_txt $de2                =".kWh($load_sum)." $yearly_txt\n";
+    print "$consumpt_txt $de2                =".kWh($sel_load_sum).
+        " $load_scope\n" if $date;
 }
 $night_sum /= (NIGHT_END - NIGHT_START) if $hours_a_day == 24;
 print "$b_txt =".W($night_sum * $sn)."\n";
@@ -1096,8 +1097,7 @@ sub simulate()
             # $needed += $load;
             # load will be reduced by constant $bypass or $bypass_spill
 
-            # $grid_feed locally accumulates feed to grid
-            my $grid_feed_in = 0;
+            my $grid_feed_in = 0; # locally accumulates grid feed
 
             # $pv_used locally accumulates PV own consumption
             # feed by constant bypass or just as much as needed (optimal charge)
@@ -1137,7 +1137,7 @@ sub simulate()
                 $capacity_to_fill = 0 if $capacity_to_fill < 0;
                 my ($charge_input, $charge_delta) = (0, 0);
                 my $test_blank_no_surplus = " " x
-                    (defined $bypass ? ($bypass_spill || $AC_coupled ? 28 : 16)
+                    (defined $bypass ? ($bypass_spill || $AC_coupled ? 28 : 11)
                                      : 18) if $test_started;
                 if ($excess_power > 0) {
                     # $excess_power is the power available for charging
@@ -1155,9 +1155,12 @@ sub simulate()
                            $excess_power + .5, $need_for_fill + .5,
                            max($surplus, 0) + .5) if $test_started;
                     if ($surplus > 0) {
-                        printf "power limit, " if $test_started
+                        printf "rate limit, " if $test_started
                             && $limited_fill < $need_for_fill; # else SoC limit
                         $charge_input = $limited_fill;
+                        # TODO properly handle simultaneous charge and discharge
+                        # which is relevant with non-optimal charging (-pass)
+
                         my $surplus_net = $surplus;
                         # when DC-coupled, need to transform surplus back to net
                         $surplus_net *= $inverter2_eff if $DC_coupled;
@@ -1182,7 +1185,7 @@ sub simulate()
                         } else {
                             # defined $bypass && !$bypass_spill && $DC_coupled
                             $spill_loss += $surplus_net;
-                            printf("spill loss=%4d ", $surplus_net +.5)
+                            printf("spill=%4d ", $surplus_net +.5)
                                 if $test_started;
                         }
                     } elsif ($test_started) {
@@ -1237,14 +1240,14 @@ sub simulate()
                         }
                     }
                     my $limited = "";
-                    if ($discharge > $max_dispower) {
-                        $limited = " [rate limit]";
-                        $discharge = $max_dispower;
-                    }
                     my $charge_available = $soc - $soc_min;
                     if ($discharge > $charge_available) {
-                        $limited .= " [DoD limit]";
+                        $limited .= ", DoD limit";
                         $discharge = $charge_available;
+                    }
+                    if ($discharge > $max_dispower) {
+                        $limited .= ", rate limit";
+                        $discharge = $max_dispower;
                     }
                     printf("- %4d%s - lost:%4d", $discharge * $storage_eff + .5,
                            $limited, $discharge * (1 - $storage_eff) + .5)
@@ -1784,8 +1787,8 @@ if ($verbose) {
     print_arr_perc("$V_txt $per_m$de1        = ", \@PV_by_month,
                    $PV_gross_sum * $years, 1, 12, 1);
 }
-print "$PV_gross_txt $en1            =".kWh($PV_gross_sum);
-print "$PV_DC_txt $en2             =" .kWh($PV_DC_sum).
+print "$PV_gross_txt $en1            =".kWh($PV_gross_sum)."\n";
+print "$PV_DC_txt $en1               =" .kWh($PV_DC_sum).
     ", $pvsys_eff_txt ".percent($pvsys_eff)."%\n";
 print "$net_max_txt $en4$en1      =".W($PV_net_max)." $PV_net_max_time\n";
 print "$PV_loss_txt $en2 $en2 $en2  ="       .kWh($pv_losses).
@@ -1797,7 +1800,7 @@ print "$PV_net_txt $en2             =" .kWh($PV_net_sum).
 #    percent($PV_net_sum ? $PV_net_bright_sum / $PV_net_sum : 0);
 
 print "\n";
-print "$consumpt_txt    =" .kWh($sel_load_sum)." $load_scope\n";
+print "$consumpt_txt $de2                =".kWh($sel_load_sum)." $load_scope\n";
 print "$load_const_txt $en1             =".W($load_const)."  $load_during_txt\n"
     if defined $load_const;
 if (defined $capacity) {

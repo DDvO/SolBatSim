@@ -970,6 +970,7 @@ my @dischg            if defined $capacity; # dischg delta on average over years
 my @dischg_by_item    if defined $capacity && $max;
 my @dischg_per_hour   if defined $capacity;
 my $dischg_sum    = 0 if defined $capacity;
+my $DC_feed_loss  = 0 if defined $capacity; # due to inverter before storage
 my $spill_loss    = 0 if defined $capacity;
 my $charging_loss = 0 if defined $capacity;
 my $storage_loss  = 0 if defined $capacity;
@@ -1042,11 +1043,6 @@ sub simulate()
         my $PV_loss = 0;
         if ($curb && $pvnet_power > $curb) {
             $PV_loss = $pvnet_power - $curb;
-            unless ($DC_coupled) {
-                $pv_loss[$month][$day][$hour] += $PV_loss;
-                $pv_losses += $PV_loss;
-                $pv_loss_hours++;
-            }
             $PV_net[$year][$month][$day][$hour] = $pvnet_power = $curb;
             # print "".time_string($year_, $month, $day, $hour, $minute).
             #"\tPV=".round($pvnet_power)."\tcurb=".round($curb).
@@ -1079,7 +1075,7 @@ sub simulate()
 
         # my $needed = 0;
         my $pv_use_losses = 0 if $curb;
-        my $AC_cpl_losses_this_hour = 0 if $AC_coupled;
+        my $coupling_losses_this_hour = 0;
         my $items = $items_by_hour[$month][$day][$hour];
 
         # factor out $items for optimizing the inner loop
@@ -1170,7 +1166,7 @@ sub simulate()
 
                         my $surplus_net = $surplus;
                         # when DC-coupled, need to transform surplus back to net
-                        $surplus_net *= $inverter2_eff if $DC_coupled;
+                        $surplus_net *= $inverter_eff if $DC_coupled;
 
                         if (!defined $bypass) { # i.e., on optimal charge
                             $grid_feed_in += $surplus_net;
@@ -1191,8 +1187,8 @@ sub simulate()
                                 if $test_started;
                         } else {
                             # defined $bypass && !$bypass_spill && $DC_coupled
-                            $spill_loss += $surplus_net;
-                            printf("spill=%4d ", $surplus_net +.5)
+                            $spill_loss += $surplus;
+                            printf("spill=%4d ", $surplus +.5)
                                 if $test_started;
                         }
                     } elsif ($test_started) {
@@ -1216,8 +1212,7 @@ sub simulate()
                 my $print_charge = $test_started &&
                     ($excess_power > 0 || $soc > $soc_min);
                 printf("chrg loss=%4d dischrg needed=%4d [SoC %4d + %4d ",
-                       ($charge_input - $charge_delta) *
-                       ($AC_coupled ? 1 : $inverter_eff) + .5,
+                       $charge_input - $charge_delta + .5,
                        $power_needed + .5, $soc - $charge_delta + .5,
                        $charge_delta + .5) if $print_charge;
 
@@ -1228,7 +1223,7 @@ sub simulate()
                 #    if $unused_bypass == 0 && $PV_loss != 0; # implies $curb
 
                 my $dischg_delta = 0;
-                my $AC_loss = 0;
+                my $dischg_loss = 0;
                 if ($soc > $soc_min) { # storage not empty
                     # optimal discharge: exactly as much as currently needed
                     # $discharge = min($power_needed, $soc)
@@ -1264,15 +1259,13 @@ sub simulate()
                         $discharge *= $storage_eff;
                         $dischg_delta = $discharge; # after storage loss
                         my $discharge_net = $discharge * $inverter2_eff;
-                        if ($AC_coupled) {
-                            $AC_loss = $discharge - $discharge_net;
-                            $AC_cpl_losses_this_hour += $AC_loss;
-                        }
+                        $dischg_loss = $discharge - $discharge_net;
+                        $coupling_losses_this_hour += $dischg_loss;
                         if (defined $max_feed_scaled_by_eff && $const_feed) {
                             # $feed_sum += $discharge;
                             my $dis_feed_in = $discharge_net - $power_needed;
                             if ($dis_feed_in > 0) {
-                                $grid_feed_in += $dis_feed_in;
+                                $grid_feed_in  += $dis_feed_in;
                                 $discharge_net -= $dis_feed_in;
                             }
                         }
@@ -1288,8 +1281,7 @@ sub simulate()
                 }
                 # printf("= %4d] ", $soc + .5) if $print_charge;
                 printf("] ") if $print_charge;
-                printf("AC cpl. loss=%4d ", $AC_loss + .5)
-                    if $print_charge && $AC_coupled;
+                printf("dischg loss=%4d ", $dischg_loss + .5) if $print_charge;
                 $hcharge_delta += $charge_delta;
                 $hdischg_delta += $dischg_delta;
                 if ($max) {
@@ -1297,7 +1289,7 @@ sub simulate()
                     $dischg_by_item[$month][$day][$hour][$item]+= $dischg_delta;
                 }
                 $soc_by_item[$month][$day][$hour][$item] += $soc;
-                printf(" " x (53 + ($AC_coupled ? 18 : 0)))
+                printf(" " x (53 + 17))
                     if $test_started && !$print_charge;
             } elsif ($excess_power > 0) {
                 $grid_feed_in = $excess_power;
@@ -1332,8 +1324,14 @@ sub simulate()
             $pv_use_losses /= $items;
             $PV_use_loss[$month][$day][$hour] += $pv_use_losses;
             $PV_use_loss_sum += $pv_use_losses;
+            $PV_loss = $pv_use_losses if $DC_coupled;
+            if ($PV_loss != 0) {
+                $PV_loss[$month][$day][$hour] += $PV_loss;
+                $PV_losses += $PV_loss;
+                $PV_loss_hours++;
+            }
         }
-        $coupling_loss += $AC_cpl_losses_this_hour / $items if $AC_coupled;
+        $coupling_loss += $coupling_losses_this_hour / $items;
         # $sum_needed += $needed / $items; # per hour
         # print "".time_string($year_, $month, $day, $hour, $minute).
         # "\tPV=".round($pvnet_power)."\tPN=".round($needed)."\tPU=".round($usages).
@@ -1415,7 +1413,7 @@ sub simulate()
         $dischg_sum          *= $load_scale / $years;
         $charging_loss       *= $load_scale / $years;
         $spill_loss          *= $load_scale / $years;
-        $coupling_loss       *= $load_scale / $years if $AC_coupled;
+        $coupling_loss       *= $load_scale / $years;
         $PV_used_via_storage *= $load_scale / $years;
     }
 }
@@ -1528,26 +1526,25 @@ my $own_ratio = round_percent($PV_sum ? $PV_used_sum / $PV_sum : 1);
 my $load_cover= round_percent($sel_load_sum ? $PV_used_sum / $sel_load_sum : 1);
 my $cycles = 0;
 if (defined $capacity) { # also for future loss when discharging the rest:
-    $charging_loss *= $inverter2_eff if $DC_coupled;
-    my $chg_loss_alt = ($charge_eff ? $charge_sum * (1 / $charge_eff - 1) : 0);
-    $chg_loss_alt *= $inverter2_eff if $DC_coupled;
+    my $chg_loss_alt = ($charge_eff ? $charge_sum * (1 / $charge_eff - 1) : 1);
     if ($charge_eff) {
         my $discrepancy = $charging_loss - $chg_loss_alt;
         die "Internal error: charging loss calculation discrepancy ".
             "$discrepancy: $charging_loss vs. $chg_loss_alt"
             if abs($discrepancy) > 0.001; # 1 mWh
     }
-    $storage_loss = $charge_sum * (1 - $storage_eff);
-    $storage_loss *= $inverter2_eff if $DC_coupled;
+    $storage_loss = $charge_sum * (1 - $storage_eff); # including future dischg
     $cycles = round($charge_sum / ($soc_max - $soc_min)) if $capacity != 0;
     $cycles-- if $soc > $soc_min;
-    # future losses:
-    $soc *= $storage_eff;
-    if ($AC_coupled) {
-        $coupling_loss += $soc * (1 - $inverter2_eff);
-    } else {
-        $coupling_loss = $PV_gross_sum * $pvsys_eff * (1 - $inverter2_eff);
+    if ($DC_coupled) {
+        $DC_feed_loss =
+            ($PV_used_sum + $grid_feed_sum - $dischg_sum * $inverter2_eff) *
+            ($inverter_eff == 0 ? 1 : 1 / $inverter_eff - 1);
+        $coupling_loss += $DC_feed_loss;
     }
+    # future losses on discharging:
+    $soc *= $storage_eff;
+    $coupling_loss += $soc * (1 - $inverter2_eff);
     $soc *= $inverter2_eff;
 }
 
@@ -1604,7 +1601,7 @@ sub save_statistics {
             ."$coupl_loss_txt $due_to $ieff2_txt in kWh,"
             ."$own_storage_txt in kWh,$stored_txt in kWh,"
             ."$cycles_txt $of_eff_cap_txt\n";
-        print $OU "".round_1000($spill_loss).","
+        print $OU "".round_1000($spill_loss * $inverter_eff).","
             .round_1000($charging_loss).",".round_1000($storage_loss).","
             .round_1000($coupling_loss).","
             .round_1000($PV_used_via_storage).",".round_1000($charge_sum)
@@ -1823,7 +1820,9 @@ if (defined $capacity) {
     print "$feed_txt $en3        ".($const_feed ? "" : " ")
         ."=".W($max_feed)."$feed_during_txt" if defined $max_feed;
     print ", $max_disrate_txt $max_disrate C\n";
-    print "$spill_loss_txt $en3 $en3 $en3   =".kWh($spill_loss)."\n";
+    print "$spill_loss_txt $en3 $en3 $en3   =".
+        kWh($spill_loss * $inverter_eff).
+        ($AC_coupled ? " $because $coupled_txt" : "")."\n";
     print "$charging_loss_txt $de2              =".kWh($charging_loss)
         ." $due_to $ceff_txt ".percent($charge_eff)."%\n";
     print "$storage_loss_txt $en3            =".kWh($storage_loss)
@@ -1859,6 +1858,7 @@ die "Internal error: calculation discrepancy $discrepancy: ".
     "grid feed-in $grid_feed_sum vs. $grid_feed_sum_alt =\n".
     "PV ".($DC_coupled ? "DC" : "net")." sum "
     ."$PV_sum - PV used $PV_used_sum".(defined $capacity ?
-        " - loss by spill $spill_loss - charging loss $charging_loss".
-        " - storage loss $storage_loss - coupling loss $coupling_loss".
+        " - DC feed loss $DC_feed_loss - loss by spill $spill_loss".
+        " - charging loss $charging_loss - storage loss $storage_loss".
+        " - coupling loss by 2nd inverter ".($coupling_loss - $DC_feed_loss).
         " - SoC $soc" : "") if abs($discrepancy) > 0.001; # 1 mWh

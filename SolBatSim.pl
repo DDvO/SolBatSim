@@ -318,6 +318,12 @@ die "-only option does not have form (*|YYYY)[-(*|MM)[-(*|DD)[:(*|HH)]]]"
 my ($sel_year, $sel_month, $sel_day, $sel_hour) = ($1, $3, $5, $7) if $date;
 die "With -tmy, the year given with the -only option must be '*'"
     if $tmy && defined $sel_year && $sel_year ne "*";
+die "Month given with -only option is out of range 1..12" if defined
+    $sel_month && $sel_month ne "*" && ($sel_month < 1 || $sel_month > 12);
+die "Day given with -only option is out of range 1..31"
+    if defined $sel_day && $sel_day ne "*" && ($sel_day < 1 || $sel_day > 31);
+die "Hour given with -only option is out of range 0..23"
+    if defined $sel_hour && $sel_hour ne "*" && $sel_hour > 23;
 
 die "Missing load profile file name - should be first CLI argument"
     unless defined $load_profile;
@@ -655,6 +661,7 @@ sub get_profile {
         adjust_day_month();
     }
     $items_per_hour = $sum_items / $num_hours;
+    $sel_hours -= TEST_START if $test;
 }
 
 get_profile($load_profile);
@@ -664,7 +671,7 @@ my $load_scale = defined $consumption && $load_sum != 0
 my $load_scale_never_0 = never_0($load_scale);
 
 my $hours_a_day = defined $sel_hour && $sel_hour ne "*" ? 1 : 24;
-my $sn = $load_scale / $sel_hours * $hours_a_day;
+my $sn = $sel_hours ? $load_scale / $sel_hours * $hours_a_day : 0;
 for (my $hour = 0; $hour < 24; $hour++) {
     $load_per_hour[$hour] = round($load_by_hour[$hour] * $sn);
 }
@@ -1418,7 +1425,7 @@ simulate();
 my $pny = $sel_hours / $hours_a_day * $years;
 my $sny = $sn / $years;
 for (my $hour = 0; $hour < 24; $hour++) {
-    $PV_per_hour[$hour] = round($PV_by_hour[$hour] / $pny);
+    $PV_per_hour[$hour] = round($PV_by_hour[$hour] / never_0($pny));
     $grid_feed_per_hour[$hour] = round($grid_feed_per_hour[$hour] * $sny);
     if (defined $capacity) {
         $charge_per_hour[$hour] = round($charge_per_hour[$hour] * $sny);

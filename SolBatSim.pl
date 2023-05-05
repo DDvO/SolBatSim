@@ -364,7 +364,7 @@ my $inverter2_eff_never_0 = never_0($inverter2_eff) if defined $storage_eff;
 # deliberately not using any extra packages like Math
 sub min { return $_[0] < $_[1] ? $_[0] : $_[1]; }
 sub max { return $_[0] > $_[1] ? $_[0] : $_[1]; }
-sub round { return int(.5 + shift); }
+sub round { return int(($_[0] < 0 ? -.5 : .5) + shift); }
 sub check_consistency {
     return if $test;
     my ($actual, $expected, $name, $file) = (shift, shift, shift, shift);
@@ -956,9 +956,10 @@ my $charge_sum    = 0 if defined $capacity;
 my @dischg            if defined $capacity; # dischg delta on average over years
 my @dischg_by_item    if defined $capacity && $max;
 my @dischg_per_hour   if defined $capacity;
-my $dischg_sum = 0    if defined $capacity;
-my $charging_loss = 0 if defined $capacity;
+my $dischg_sum    = 0 if defined $capacity;
 my $spill_loss    = 0 if defined $capacity;
+my $charging_loss = 0 if defined $capacity;
+my $storage_loss  = 0 if defined $capacity;
 my $AC_cpl_losses = 0 if defined $capacity;
 
 sub simulate()
@@ -1501,7 +1502,6 @@ my $dischg_after_txt = "$dischg_txt $after $storage_loss_txt";
 
 my $own_ratio = round_percent($PV_net_sum ? $PV_used_sum/$PV_net_sum:0);
 my $load_cover= round_percent($sel_load_sum ? $PV_used_sum / $sel_load_sum : 0);
-my $storage_loss;
 my $cycles = 0;
 if (defined $capacity) { # also for future loss when discharging the rest:
     $charging_loss *= $inverter2_eff if $DC_coupled;
@@ -1545,7 +1545,6 @@ sub save_statistics {
     print $OU "$load_const," if defined $load_const;
     print $OU "$load_profile,".int($load_max).",".join(",", @PV_files)."\n";
 
-    $pvsys_eff = round_percent($pvsys_eff);
     print $OU "$nominal_txt in Wp,$limit_txt in W $none_txt,"
         ."$gross_max_txt in W $PV_gross_max_time,"
         ."$net_max_txt in W $PV_net_max_time,"
@@ -1553,8 +1552,8 @@ sub save_statistics {
         ."$own_ratio_txt,$load_cover_txt,";
     print $OU ",$D_txt:,".join(",", @load_dist) if defined $load_dist;
     print $OU "\n$nominal_sum,$limits_sum,".round($PV_gross_max).","
-        .round($PV_net_max).",".($curb ? $curb : $en ? "none" : "keine").
-        ",$pvsys_eff,$inverter_eff,$own_ratio,$load_cover,";
+        .round($PV_net_max).",".($curb ? $curb : $en ? "none" : "keine").","
+        .round_percent($pvsys_eff).",$inverter_eff,$own_ratio,$load_cover,";
     print $OU ",$d_txt:,".join(",", @load_factors) if defined $load_factors;
     print $OU "\n";
 
@@ -1812,17 +1811,6 @@ if (defined $capacity) {
     }
     print "$stored_txt $en2$en2        =" .kWh($charge_sum)." $after $charging_loss_txt\n";
     printf "$cycles_txt $de1                =  %3d $of_eff_cap_txt\n", ($cycles + .5);
-
-    $PV_net_sum = $PV_gross_sum * $pvsys_eff * $inverter2_eff if $DC_coupled;
-    my $grid_feed_sum_alt = $PV_net_sum - $PV_used_sum - $AC_cpl_losses
-        - $spill_loss - $charging_loss - $storage_loss - $soc;
-    my $discrepancy = $grid_feed_sum - $grid_feed_sum_alt;
-    die "Internal error: grid feed-in calculation discrepancy $discrepancy: ".
-        "grid feed-in $grid_feed_sum vs. ".int($grid_feed_sum_alt + .5)." =\n".
-        "PV net sum $PV_net_sum - PV used $PV_used_sum".
-        " - AC coupling loss $AC_cpl_losses - loss by spill $spill_loss".
-        " - charging loss $charging_loss - storage loss $storage_loss".
-        " - SoC $soc" if abs($discrepancy) > 0.001; # 1 mWh
     print "\n";
 }
 
@@ -1836,3 +1824,15 @@ print "$own_ratio_txt $en4 $en4  =  ".sprintf("%3d", percent($own_ratio))
     ." % $of_yield\n";
 my $load_cover_str = sprintf("%3d", percent($load_cover));
 print "$load_cover_txt $en1        =  $load_cover_str % $of_consumption\n";
+
+$PV_net_sum = $PV_gross_sum * $pvsys_eff * $inverter2_eff if $DC_coupled;
+my $grid_feed_sum_alt = $PV_net_sum - $PV_used_sum;
+$grid_feed_sum_alt -= $AC_cpl_losses + $spill_loss + $charging_loss
+    + $storage_loss + $soc if defined $capacity;
+my $discrepancy = $grid_feed_sum - $grid_feed_sum_alt;
+die "Internal error: calculation discrepancy ".round($discrepancy).": ".
+    "grid feed-in $grid_feed_sum vs. $grid_feed_sum_alt =\n".
+    "PV net sum $PV_net_sum - PV used $PV_used_sum".(defined $capacity ?
+        " - AC coupling loss $AC_cpl_losses - loss by spill $spill_loss".
+        " - charging loss $charging_loss - storage loss $storage_loss".
+        " - SoC $soc" : "") if abs($discrepancy) > 0.001; # 1 mWh

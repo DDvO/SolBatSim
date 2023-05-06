@@ -6,7 +6,7 @@
 #
 # Nutzung: Solar.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
 #   (<PV-Daten-Datei> [<Nominalleistung in Wp> [<WR-Eingangsbegrenzung in W>]])+
-#   [-only <Jahr>[-<Monat>[-<Tag>[:<Stunde>]]]]
+#   [-only <*|Jahr[..Jahr]>[-<*|Mon[..Mon]>[-<*|Tag[..Tag]>[:<*|Std[..Std]]]]]
 #   [-dist <relative Lastverteilung über den Tag pro Stunde 0,..,23>
 #   [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>
 #   [-load <konstante Last, auf gleicher Skala wie in der PV-Daten-Datei>
@@ -59,7 +59,7 @@
 #
 # Usage: Solar.pl <load profile file> [<consumption per year in kWh>]
 #   (<PV data file> [<nominal power in Wp> [<inverter input limit in W]])+
-#   [-only <year>[-<month>[-<day>[:<hour]]]]
+#   [-only <*|year[..year]>[-<*|mon[..mon]>[-<*|day[..day]>[:<*|hour[..hour]]]]]
 #   [-dist <relative load distribution over each day, per hour 0,..,23>
 #   [-bend <load distort factors for hour 0,..,23 each day, default 1>
 #   [-load <constant load, at same scale as in PV data file>
@@ -219,12 +219,12 @@ sub array_arg {
 my $load_dist;
 my $load_dist_sum = 0;
 my $load_factors;
-my ($en, $date, $tmy, $curb,
+my ($en, $only, $tmy, $curb,
     $max, $hourly, $daily, $weekly,  $monthly, $seasonly);
 while ($#ARGV >= 0) {
     if      ($ARGV[0] eq "-test"    ) { $test         = num_arg();
     } elsif ($ARGV[0] eq "-en"      ) { $en           =  no_arg();
-    } elsif ($ARGV[0] eq "-only"    ) { $date         = str_arg();
+    } elsif ($ARGV[0] eq "-only"    ) { $only         = str_arg();
     } elsif ($ARGV[0] eq "-dist"    ) { $load_dist    = str_arg();
     } elsif ($ARGV[0] eq "-bend"    ) { $load_factors = str_arg();
     } elsif ($ARGV[0] eq "-load"    ) { $load_const   = num_arg();
@@ -312,18 +312,49 @@ if ($test) {
 }
 
 die "Missing PV data file name" if $#PV_nomin < 0;
-die "-only option does not have form (*|YYYY)[-(*|MM)[-(*|DD)[:(*|HH)]]]"
-    if $date &&
-    !($date =~ m/^(\*|\d\d?\d?\d?)(-(\*|\d\d?)(-(\*|\d\d?)(:(\*|\d\d?))?)?)?$/);
-my ($sel_year, $sel_month, $sel_day, $sel_hour) = ($1, $3, $5, $7) if $date;
+die "-only option argument does not have form (*|YYYY[..YYYY])[-(*|MM[..MM])".
+    "[-(*|DD[..DD])[:(*|HH[..HH])]]]"
+    if $only &&
+    !($only =~ m/^(\*|\d{4})(\.\.(\d{4}))?(-(\*|\d\d?)(\.\.(\d\d?))?
+                (-(\*|\d\d?)(\.\.(\d\d?))?(:(\*|\d\d?)(\.\.(\d\d?))?)?)?)?$/x);
+my ($sel_year, $sel_year2, $sel_month, $sel_month2,
+    $sel_day, $sel_day2, $sel_hour, $sel_hour2) =
+    ($1, $3, $5, $7, $9, $11, $13, $15) if $only;
+undef $sel_year  if defined $sel_year  && $sel_year  eq "*";
+undef $sel_month if defined $sel_month && $sel_month eq "*";
+undef $sel_day   if defined $sel_day   && $sel_day   eq "*";
+undef $sel_hour  if defined $sel_hour  && $sel_hour  eq "*";
 die "With -tmy, the year given with the -only option must be '*'"
-    if $tmy && defined $sel_year && $sel_year ne "*";
-die "Month given with -only option is out of range 1..12" if defined
-    $sel_month && $sel_month ne "*" && ($sel_month < 1 || $sel_month > 12);
-die "Day given with -only option is out of range 1..31"
-    if defined $sel_day && $sel_day ne "*" && ($sel_day < 1 || $sel_day > 31);
-die "Hour given with -only option is out of range 0..23"
-    if defined $sel_hour && $sel_hour ne "*" && $sel_hour > 23;
+    if $tmy && defined $sel_year;
+if (defined $sel_year2) {
+    die "Second year value in the -only option must not be given ".
+        "as the first one is '*'" if !defined $sel_year;
+    die "Second year $sel_year2 in the -only option must be at least $sel_year"
+        if $sel_year2 < $sel_year;
+}
+sub check_range {
+    my ($desc, $val, $start, $end) = (shift, shift, shift,shift);
+    die "Second $desc value in the -only option must not be given ".
+        "as the first one is '*'" if defined $val && !defined $start;
+    die "$desc $val given with -only option is out of range $start..$end"
+        if defined $val &&
+        ($val < (!defined $start ? ($end == 23 ? 0 : 1) : $start)
+         || $val > $end);
+}
+my @days_per_month = (0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31);
+my $max_day = defined $sel_month
+    && (!defined $sel_month2 || $sel_month2 == $sel_month)
+    ? $days_per_month[$sel_month] : 31;
+check_range("Month", $sel_month , 1         ,       12);
+check_range("month", $sel_month2, $sel_month,       12);
+check_range("Day"  , $sel_day   , 1         , $max_day);
+check_range("day"  , $sel_day2  , $sel_day  , $max_day);
+check_range("Hour" , $sel_hour  , 0         ,       23);
+check_range("hour" , $sel_hour2 , $sel_hour ,       23);
+$sel_year2  = $sel_year  unless defined $sel_year2;
+$sel_month2 = $sel_month unless defined $sel_month2;
+$sel_day2   = $sel_day   unless defined $sel_day2;
+$sel_hour2  = $sel_hour  unless defined $sel_hour2;
 
 die "Missing load profile file name - should be first CLI argument"
     unless defined $load_profile;
@@ -433,9 +464,10 @@ sub print_arr_perc {
 }
 
 sub selected {
-    return (!defined $sel_month || $sel_month eq "*" || $_[0] == $sel_month)
-        && (!defined $sel_day   || $sel_day   eq "*" || $_[1] == $sel_day  )
-        && (!defined $sel_hour  || $sel_hour  eq "*" || $_[2] == $sel_hour );
+    my ($m, $d, $h) = (shift, shift, shift);
+    return (!defined $sel_month || $sel_month <= $m && $m <= $sel_month2)
+        && (!defined $sel_day   || $sel_day   <= $d && $d <= $sel_day2  )
+        && (!defined $sel_hour  || $sel_hour  <= $h && $h <= $sel_hour2 );
 }
 
 # all hours according to local time without switching for daylight saving
@@ -443,19 +475,16 @@ use constant NIGHT_START =>  0; # at night (with just basic load)
 use constant NIGHT_END   =>  6;
 
 my $sum_items = 0;
+my ($sel_items, $sel_hours) = 0; # items/hours a year selected by -only
 my $load_max = 0;
 my $load_max_time = $no_time_txt;
 my $night_sum = 0;
 my ($load_sum, $sel_load_sum) = (0, 0);
-my $sel_hours = 0; # number of hours a year selected for simulation
 
 my ($month, $day, $hour) = (1, 1, 0);
 sub adjust_day_month {
     return if $hour % 24 != 0;
-    if ($day == 28 && $month == 2 ||
-        $day == 30 && ($month == 4 || $month == 6 ||
-                       $month == 9 || $month == 11) ||
-        $day == 31) {
+    if ($day == $days_per_month[$month]) {
         $day = 1;
         $month++;
     } else {
@@ -620,6 +649,7 @@ sub get_profile {
                       : ($load_from <= $hour && $hour < $load_to)))
                     || $avg_hour) {
                     $items_by_hour[$month][$day][$hour] = 1;
+                    $sel_items ++ if $sel;
                     $hload = $load_const if defined $load_const;
                     $load_item[$month][$day][$hour][0] = $hload;
                     max_load($hload, $year, $month, $day, $hour, 0) if $sel;
@@ -628,15 +658,16 @@ sub get_profile {
                     $hload = $load[$month][$day][$hour] = $load_factors[$hour] *
                         (!defined $load_dist ? $hload :
                          $load_dist[$hour] * $day_load / $load_dist_sum);
-                    my $n = $items_by_hour[$month][$day][$hour];
-                    for (my $item = 0; $item < $n; $item++) {
+                    my $items = $items_by_hour[$month][$day][$hour];
+                    $sel_items += $items if $sel;
+                    for (my $item = 0; $item < $items; $item++) {
                         my $load = $load_item[$month][$day][$hour][$item]
                             * $load_factors[$hour];
                         $load *= $hload / $orig_hload
                             if defined $load_dist && $orig_hload != 0;
                         $load_item[$month][$day][$hour][$item] = $load;
                         max_load($load, $year, $month, $day, $hour,
-                                 60 * $item / $n) if $sel;
+                                 60 * $item / $items) if $sel;
                     }
                 }
                 $load_sum += $hload;
@@ -670,7 +701,7 @@ my $load_scale = defined $consumption && $load_sum != 0
     ? 1000 * $consumption / $load_sum : 1;
 my $load_scale_never_0 = never_0($load_scale);
 
-my $hours_a_day = defined $sel_hour && $sel_hour ne "*" ? 1 : 24;
+my $hours_a_day = defined $sel_hour ? 1 : 24;
 my $sn = $sel_hours ? $load_scale / $sel_hours * $hours_a_day : 0;
 for (my $hour = 0; $hour < 24; $hour++) {
     $load_per_hour[$hour] = round($load_by_hour[$hour] * $sn);
@@ -712,8 +743,10 @@ my $de3 = $en ? ""    : "   ";
 my $s10   = "          "; 
 my $s13   = "             ";
 my $lhs_spaces = " " x length("$W_txt$en1");
-my $only_during = defined $date ?" $only_txt $during_txt $date" : "";
-my $load_scope  = defined $date ? "$only_txt $during_txt $date" : "$yearly_txt";
+
+my $only_during = $only ?" $only_txt $during_txt $only" : "";
+$only =~ s/^[^-]*-// if $only; # chop year restriction
+my $load_only = $only ? "$only_txt $during_txt YYYY-$only" : "$yearly_txt";
 
 print "$profile_txt$de1$s10 : $load_profile\n" unless $test;
 if ($verbose) {
@@ -721,7 +754,7 @@ if ($verbose) {
     print "$t_txt =".kWh($orig_load_sum)."\n";
     print "$consumpt_txt $de2                =".kWh($load_sum)." $yearly_txt\n";
     print "$consumpt_txt $de2                =".kWh($sel_load_sum).
-        " $load_scope\n" if $date;
+        " $load_only\n" if $only;
 }
 $night_sum /= (NIGHT_END - NIGHT_START) if $hours_a_day == 24;
 print "$b_txt =".W($night_sum * $sn)."\n";
@@ -744,7 +777,9 @@ print "\n";
 
 my $nominal_power_sum = 0;
 my @PV_gross;
+my @PV_gross_across; # sum over years, only where selected
 my @PV_net;
+my @PV_net_across; # sum over years, only where selected
 my ($start_year, $years);
 my $garbled_hours = 0;
 sub get_power {
@@ -949,7 +984,7 @@ my $PV_used_sum = 0;
 my $PV_used_via_storage = 0;
 
 my @grid_feed_by_item if $max;
-my @grid_feed_per_hour;
+my @grid_feed_per_hour = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
 my @grid_feed;
 my $grid_feed_sum = 0;
 
@@ -964,11 +999,13 @@ my @soc_by_item       if defined $capacity;
 my $soc               if defined $capacity; # state of charge of the battery
 my @charge            if defined $capacity; # charge delta on average over years
 my @charge_by_item    if defined $capacity && $max;
-my @charge_per_hour   if defined $capacity;
+my @charge_per_hour = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+                      if defined $capacity;
 my $charge_sum    = 0 if defined $capacity;
 my @dischg            if defined $capacity; # dischg delta on average over years
 my @dischg_by_item    if defined $capacity && $max;
-my @dischg_per_hour   if defined $capacity;
+my @dischg_per_hour = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+                      if defined $capacity;
 my $dischg_sum    = 0 if defined $capacity;
 my $DC_feed_loss  = 0 if defined $capacity; # due to inverter before storage
 my $spill_loss    = 0 if defined $capacity;
@@ -995,31 +1032,29 @@ sub simulate()
 
     my $end_year = $years;
     # restrict simulation to year optionally given by the -only option
-    if (defined $sel_year && $sel_year ne "*") {
+    if (defined $sel_year) {
+        my $max = $start_year + $years - 1;
         $year = $sel_year - $start_year;
-        die "Year given with -only option must be in range $start_year..".
-            ($start_year + $years - 1) if $year < 0 || $year >= $years;
-        ($years, $end_year) = (1, $year + 1);
+        die "Year given with -only option must be in range $start_year..$max"
+            if $year < 0 || $year >= $years;
+        die "Second year given with -only option must be in range "
+            ."$sel_year..$max" if defined $sel_year2
+            && ($sel_year2 < $sel_year || $sel_year2 - $start_year >= $years);
+        $years = 1 + (defined $sel_year2 ? $sel_year2 - $sel_year : 0);
+        $end_year = $year + $years;
     }
+    my $first_year = $year;
+
     STDOUT->autoflush(1);
     print "".($en ? "simulated PV year  " : "Simuliertes PV-Jahr")."         ="
         unless $test;
     while ($year < $end_year) {
         my $year_ = $tmy ? "TMY (2008..2020)" : $start_year + $year;
-        $pv_loss    [$month][$day][$hour] = 0 if $curb && $year == 0;
-        $PV_use_loss[$month][$day][$hour] = 0 if $curb && $year == 0;
-        my $usages = 0;
-        my $hgrid_feed = 0;
-        my ($hcharge_delta, $hdischg_delta) = (0, 0) if $capacity;
+        $PV_loss[$month][$day][$hour] = 0 if $curb && $year == $first_year;
 
         # restrict simulation to month, day, and hour given by the -only option
-        if (!selected($month, $day, $hour)) {
-            $PV_gross[$year][$month][$day][$hour] = 0;
-            $PV_net  [$year][$month][$day][$hour] = 0;
-            goto NEXT;
-        }
+        goto NEXT unless selected($month, $day, $hour);
 
-        # calculate statistics on PV gross power
         my $gross_power = $PV_gross[$year][$month][$day][$hour];
         my $pvnet_power = $PV_net  [$year][$month][$day][$hour];
         if (!defined $gross_power) {
@@ -1032,8 +1067,15 @@ sub simulate()
                     time_string($year_, $month, $day, $hour, $minute);
             }
         }
+
+        my $usages = 0;
+        my $hgrid_feed = 0;
+        my ($hcharge_delta, $hdischg_delta) = (0, 0) if $capacity;
+
+        # calculate statistics on PV gross power
         $PV_by_hour [$hour ] += $gross_power;
         $PV_by_month[$month] += $gross_power;
+        $PV_gross_across[$month][$day][$hour] += $gross_power;
         if ($gross_power > $PV_gross_max) {
             $PV_gross_max = $gross_power;
             $PV_gross_max_time = time_string($year_,$month,$day,$hour,$minute);
@@ -1048,6 +1090,7 @@ sub simulate()
             #"\tPV=".round($pvnet_power)."\tcurb=".round($curb).
             #"\tloss=".round($pv_losses)."\t$_\n";
         }
+        $PV_net_across  [$month][$day][$hour] += $pvnet_power;
         if ($pvnet_power > $PV_net_max) {
             $PV_net_max = $pvnet_power;
             $PV_net_max_time = time_string($year_,$month,$day,$hour,$minute);
@@ -1311,7 +1354,7 @@ sub simulate()
                 my $l = min($PV_loss_curr, $power_missing);
                 $PV_use_loss_by_item[$month][$day][$hour][$item] += $l if $max;
                 $pv_use_losses += $l;
-                $PV_use_loss_hours++; # will be normalized by $sum_items
+                $PV_use_loss_hours++; # will be normalized by $sel_items
                 printf(" curb loss=%4d", $l + .5) if $test_started;
             } elsif ($PV_loss != 0 && $max) {
                 $PV_use_loss_by_item[$month][$day][$hour][$item] += 0;
@@ -1362,7 +1405,6 @@ sub simulate()
             $dischg_sum += $hdischg_delta;
         }
 
-      NEXT:
         $PV_used[$month][$day][$hour] += $usages;
         $grid_feed_per_hour      [$hour] += $hgrid_feed;
         $grid_feed [$month][$day][$hour] += $hgrid_feed;
@@ -1374,6 +1416,7 @@ sub simulate()
             $soc   [$month][$day][$hour] += $soc;
         }
 
+      NEXT:
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
         if ($month > 12) {
@@ -1391,7 +1434,7 @@ sub simulate()
     $pv_losses /= $years     if $curb;
     $pv_loss_hours /= $years if $curb;
     $PV_net_sum /= $years;
-    $PV_use_loss_hours /= ($sum_items / YearHours * $years) if $curb && !$test;
+    $PV_use_loss_hours /= ($sel_items / YearHours * $years) if $curb;
     # also undo: factor out $load_scale for optimizing the inner loop
     $PV_use_loss_sum *= $load_scale / $years if $curb;
     $PV_used_sum *= $load_scale / $years;
@@ -1562,7 +1605,7 @@ sub save_statistics {
 
     my $nominal_sum = $#PV_nomin == 0 ? $PV_nomin[0] : "$PV_nomin";
     my $limits_sum  = $#PV_limit == 0 ? $PV_limit[0] : "$PV_limit";
-    print $OU "$consumpt_txt $load_scope in kWh,";
+    print $OU "$consumpt_txt $load_only in kWh,";
     print $OU "$load_const_txt in W $load_during_txt," if defined $load_const;
     print $OU "$profile_txt,$M_txt in W $load_max_time,";
     print $OU "$pv_data_txt$plural_txt$only_during\n";
@@ -1631,13 +1674,14 @@ sub save_statistics {
         round_1000($PV_net_sum).",".
         ($curb ? round_1000($PV_use_loss_sum)."," : "").
         round_1000($PV_used_sum).",".
-        round_1000($grid_feed_sum ).",".round_1000($load_sum).",".
+        round_1000($grid_feed_sum ).",".round_1000($sel_load_sum).",".
         (defined $capacity ?
          round_1000(   $charge_sum).",".round_1000($dischg_sum)."," : "").
         ",$each in kWh\n";
 
     my $i = 14 + (defined $capacity ? 6 : 0);
-    my $j = $i - 1 + ($max ? $sum_items : $hourly ? YearHours
+    my $j = $i - 1 + ($max ? $sel_items
+                      : $hourly ? $sel_hours
                       : $daily ? 365 : $weekly ? 52 : $monthly ? 12 : 4);
     my ($I, $J) = $curb ? ("I", "J", "K") : ("G", "H", "I");
     print $OU "$type_txt,$PV_gross_txt,"
@@ -1659,42 +1703,40 @@ sub save_statistics {
     my ($hload, $loss, $used, $feed) = (0, 0, 0, 0);
     my ($chg, $dis, $soc) = (0, 0, 0) if defined $capacity;
     while ($days < 365) {
+        my $sel = selected($month, $day, $hour);
         my $tim;
-        if ($weekly) {
-            $tim = $week;
-        } elsif ($season) {
-            $tim = $season== 1 ? ($en ? "spring" : "Frühjahr")
-                : $season == 2 ? ($en ? "summer" : "Sommer")
-                : $season == 3 ? ($en ? "autumn" : "Herbst")
-                :                ($en ? "winter" : "Winter");
-        } else {
-            $tim = sprintf("%02d", $month);
-            $tim = $tim."-".sprintf("%02d", $day ) if $daily || $hourly || $max;
-            $tim = $tim." ".sprintf("%02d", $hour) if $hourly || $max;
-        }
-        my ($gross_across, $net_across) = (0, 0);
-        for (my $year = 0; $year < $years; $year++) {
-            $year = $sel_year - $start_year if defined $sel_year && $sel_year ne "*";
-            my $PV_gross = $PV_gross[$year][$month][$day][$hour];
-            die "Internal error: PV_gross[$year][$month][$day] is undefined"
-                . " on day $days" unless defined  $PV_gross;
-            $gross_across += $PV_gross;
-            $net_across += $PV_net[$year][$month][$day][$hour];
-        }
-        $gross   += $gross_across;
-        $PV_loss += $pv_loss[$month][$day][$hour] if $curb;
-        $net     += $net_across;
-        if (!$max) {
-            $hload   +=        $load[$month][$day][$hour];
-            $loss    += $PV_use_loss[$month][$day][$hour] if $curb;
-            $used    += $PV_used    [$month][$day][$hour];
-            $feed    += $grid_feed  [$month][$day][$hour];
-            if (defined $capacity) {
-                $chg += $charge[$month][$day][$hour];
-                $dis += $dischg[$month][$day][$hour];
-                $soc += $soc   [$month][$day][$hour];
+
+        my $net_across = 0;
+        if ($sel) {
+            if ($weekly) {
+                $tim = $week;
+            } elsif ($season) {
+                $tim = $season== 1 ? ($en ? "spring" : "Frühjahr")
+                    : $season == 2 ? ($en ? "summer" : "Sommer")
+                    : $season == 3 ? ($en ? "autumn" : "Herbst")
+                    :                ($en ? "winter" : "Winter");
+            } else {
+                $tim = sprintf("%02d", $month);
+                $tim = $tim."-".sprintf("%02d", $day )
+                    if $daily || $hourly || $max;
+                $tim = $tim." ".sprintf("%02d", $hour) if $hourly || $max;
+            }
+            $gross += $PV_gross_across[$month][$day][$hour];
+            $net   += $PV_net_across  [$month][$day][$hour];
+            $ploss += $pv_loss[$month][$day][$hour] if $curb;
+            if (!$max) {
+                $hload   +=        $load[$month][$day][$hour];
+                $loss    += $PV_use_loss[$month][$day][$hour] if $curb;
+                $used    += $PV_used    [$month][$day][$hour];
+                $feed    += $grid_feed  [$month][$day][$hour];
+                if (defined $capacity) {
+                    $chg += $charge[$month][$day][$hour];
+                    $dis += $dischg[$month][$day][$hour];
+                    $soc += $soc   [$month][$day][$hour];
+                }
             }
         }
+
         my $items = $items_by_hour[$month][$day][$hour];
         my $fact  = ($max ? 1000 : 1) / ($max ? $items : 1) / $years;
         my $fact_s = $fact * $load_scale;
@@ -1717,7 +1759,7 @@ sub save_statistics {
                   $weekly && $days < 364 && $days % 7 == 0 ||
                   $monthly && $day == 1 ||
                   $season && $days < 364 && $days % (364 / 4) == 0)))) {
-            for (my $i = 0; $i < ($max ? $items : 1); $i++) {
+            for (my $i = 0; $sel && $i < ($max ? $items : 1); $i++) {
                 my $minute = $hourly ? ":00" : "";
                 if ($max) {
                     $minute = minute_string($i, $items);
@@ -1804,7 +1846,7 @@ print "$PV_net_txt $en2             =" .kWh($PV_net_sum).
 #    percent($PV_net_sum ? $PV_net_bright_sum / $PV_net_sum : 0);
 
 print "\n";
-print "$consumpt_txt $de2                =".kWh($sel_load_sum)." $load_scope\n";
+print "$consumpt_txt $de2                =".kWh($sel_load_sum)." $load_only\n";
 print "$load_const_txt $en1             =".W($load_const)."  $load_during_txt\n"
     if defined $load_const;
 if (defined $capacity) {

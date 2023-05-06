@@ -30,7 +30,7 @@
 #   [-hour <Statistik-Datei>] [-day <Stat.Datei>] [-week <Stat.Datei>]
 #   [-month <Stat.Datei>] [-season <Stat.Datei>] [-max <Stat.Datei>]
 #
-# Alle Uhrzeiten sind in lokaler Winterzeit (MEZ, GMT+1/UTC+1).
+# Alle Uhrzeiten sind in lokaler Winterzeit (MEZ, GMT/UTC + 1 ohne Sommerzeit).
 # Mit "-en" erfolgen die Textausgaben auf Englisch. Fehlertexte sind englisch.
 #
 # Wenn PV-Daten für mehrere Jahre gegeben sind, wird der Durchschnitt berechnet
@@ -83,7 +83,7 @@
 #   [-hour <statistics file>] [-day <stat file>] [-week <stat file>]
 #   [-month <stat file>] [-season <file>] [-max <stat file>]
 #
-# All times (hours) are in local winter time (CET, GMT+1/UTC+1).
+# All times (hours) are in local winter time (CET, GMT/UTC +1, no daylight sv.).
 # Use "-en" for text output in English. Error messages are all in English.
 #
 # When PV data for more than one year is given, the average is computed, while
@@ -175,7 +175,7 @@ sub eff_arg {
     my $opt = $ARGV[0];
     my $eff = num_arg();
     die "Percentage argument $eff for $opt option is out of range 0..100"
-        unless 0 <= $eff && $eff <= 100;
+        unless 0 <= $eff && $eff < 100.5;
     return $eff / 100;
 }
 sub str_arg {
@@ -440,13 +440,10 @@ sub W       { return sprintf("%5d W"  , round(shift)); }
 sub percent {
     my $val = shift() * 100;
     die "Percentage value $val is out of range 0..100"
-        unless 0 <= $val && $val <= 100;
+        unless 0 <= $val && $val < 100.5;
     return round($val);
 }
 sub round_percent { return percent(shift) / 100; }
-sub SUM     { my ($I, $i, $j) = (shift, shift, shift);
-              my $div = $max ? "/1000" : "";
-              return "=INT(SUM($I$i:$I$j)$div)"; }
 sub print_arr_perc {
     my $msg = shift;
     my $arr_ref = shift;
@@ -470,7 +467,7 @@ sub selected {
         && (!defined $sel_hour  || $sel_hour  <= $h && $h <= $sel_hour2 );
 }
 
-# all hours according to local time without switching for daylight saving
+# all hours according to local time without switching to daylight saving time
 use constant NIGHT_START =>  0; # at night (with just basic load)
 use constant NIGHT_END   =>  6;
 
@@ -717,9 +714,12 @@ my $limit_txt   = $en ? "inverter input limit"  : "WR-Eingangs-Begrenzung";
 my $none_txt    = $en ? "(0 = none)"            : "(0 = keine)";
 my $slope_txt   = $en ? "slope"                 : "Neigungswinkel";
 my $azimuth_txt = $en ? "azimuth"               : "Azimut";
-my $yearly_txt  = $en ? "over the year"         : "übers Jahr";
+my $yearly_txt  = $en ? "over a year"           : "über ein Jahr";
+my $values_txt  = $en ? "values"                : "Werte";
 my $only_txt    = $en ? "only"                  : "nur";
 my $during_txt  = $en ? "during"                : "während";
+my $simul_year  = $en ? "simulated PV year"     : "Simuliertes PV-Jahr";
+my $energy_txt  = $en ? "energy values are"     : "Energiewerte sind";
 my $p_txt = $en ? "load data points per hour  " : "Last-Datenpunkte pro Stunde";
 my $D_txt = $en ? "rel. load distr. each hour"  : "Rel. Lastverteilung je Std.";
 my $d_txt = $en ? "load distortions each hour"  : "Last-Verzerrung je Stunde";
@@ -823,7 +823,7 @@ sub get_power {
             # See section "System loss" in
             # ​https://joint-research-centre.ec.europa.eu/pvgis-online-tool/getting-started-pvgis/pvgis-user-manual_en
             $pvsys_eff_deflt = $sys_eff_deflt / $inverter_eff_never_0;
-            my $eff = percent($sys_eff_deflt);
+            my $eff = $sys_eff_deflt * 100;
             print ", ".($en ?
                         "contained system efficiency $eff% was overridden" :
                         "enthaltene System-Effizienz $eff% wurde übersteuert")
@@ -863,8 +863,8 @@ sub get_power {
             $pvsys_eff = $pvsys_eff_deflt unless defined $pvsys_eff;
             if ($pvsys_eff < 0 || $pvsys_eff > 1) {
                 print "\n"; # close line started with print "$pv_data_txt..."
-                die "Unreasonable PV system efficiency ".percent($pvsys_eff)
-                    ."% - have -peff and -ieff been used properly?";
+                die "Unreasonable PV system efficiency ".($pvsys_eff * 100)
+                    ." % - have -peff and -ieff been used properly?";
             }
             print ", assuming that PV data is net (after PV system and "
                 ."inverter losses)" unless defined $pvsys_eff_deflt;
@@ -1048,7 +1048,7 @@ sub simulate()
     my $first_year = $year;
 
     STDOUT->autoflush(1);
-    print "".($en ? "simulated PV year  " : "Simuliertes PV-Jahr")."         ="
+    print "$simul_year$en2         ="
         unless $test;
     while ($year < $end_year) {
         my $year_ = $tmy ? "TMY (2008..2020)" : $start_year + $year;
@@ -1428,7 +1428,6 @@ sub simulate()
         last if $test && ($day - 1) * 24 + $hour == TEST_END;
     }
     print "\n";
-    print "\n" unless $test;
     STDOUT->autoflush(0);
 
     # average sums over $years:
@@ -1623,7 +1622,7 @@ sub save_statistics {
     print $OU ",$D_txt:,".join(",", @load_dist) if defined $load_dist;
     print $OU "\n$nominal_sum,$limits_sum,".round($PV_gross_max).","
         .round($PV_net_max).",".($curb ? $curb : $en ? "none" : "keine").","
-        .round_percent($pvsys_eff).",$PV_DC_sum,$inverter_eff,"
+        .round_percent($pvsys_eff).",".round_1000($PV_DC_sum).",$inverter_eff,"
         ."$own_ratio,$load_cover,";
     print $OU ",$d_txt:,".join(",", @load_factors) if defined $load_factors;
     print $OU "\n";
@@ -1664,7 +1663,7 @@ sub save_statistics {
     print $OU "\n";
 
     my $sum_avg = $sum_txt . ($years > 1 ? " $on_average_txt" : "");
-    print $OU "$yearly_txt,$PV_gross_txt,"
+    print $OU "$values_txt$only_during,$PV_gross_txt,"
         .($curb ? "$PV_loss_txt $by_curb," : "")."$PV_net_txt,"
         .($curb ? "$usage_loss_txt $net_appr $by_curb,": "")
         ."$own_txt,$grid_feed_txt,$consumpt_txt"
@@ -1694,11 +1693,16 @@ sub save_statistics {
         ."$grid_feed_txt,$consumpt_txt"
         .(defined $capacity ? ",$charge_txt,$dischg_after_txt,$soc_txt" : "")
         ."\n";
+    sub SUM {
+        my ($I, $i, $j) = (shift, shift, shift);
+        return "=INT(SUM($I$i:$I$j))";
+    }
     print $OU "$sum_avg,".SUM("B", $i, $j).",".SUM("C", $i, $j)
         .",".SUM("D", $i, $j).",".SUM("E", $i, $j).",".SUM("F", $i, $j)
         .($curb ? ",".SUM("G", $i, $j).",".SUM("H", $i, $j) : "")
         .(defined $capacity ? ",".SUM($I, $i, $j).",".SUM($J, $i, $j) : "")
-        .",$each in ".($max ? "m" : "")."Wh\n";
+        .",,$each in ".($max ? "m" : "")."Wh\n";
+
     (my $week, my $days, $hour) = (1, 0, 0);
     ($month, $day) = $season && !$test ? (2, 5) : (1, 1);
     my ($g0, $gross, $p0, $ploss, $n0, $net) = (0, 0, 0, 0, 0, 0);
@@ -1735,9 +1739,9 @@ sub save_statistics {
                 $used    += $PV_used    [$month][$day][$hour];
                 $feed    += $grid_feed  [$month][$day][$hour];
                 if (defined $capacity) {
-                    $chg += $charge[$month][$day][$hour];
-                    $dis += $dischg[$month][$day][$hour];
-                    $soc += $soc   [$month][$day][$hour];
+                    $chg += $charge     [$month][$day][$hour];
+                    $dis += $dischg     [$month][$day][$hour];
+                    $soc += $soc        [$month][$day][$hour];
                 }
             }
         }
@@ -1829,12 +1833,12 @@ my $date_txt  = $en ? "date"   : "Datum";
 my $week_txt  = $en ? "week"   : "Woche";
 my $month_txt = $en ? "month"  : "Monat";
 my $season_txt= $en ? "season" : "Saison";
-save_statistics($max    , $max_txt  , 1, 0, 0, 0, 0, 0);
-save_statistics($hourly , $hour_txt , 0, 1, 0, 0, 0, 0);
-save_statistics($daily  , $date_txt , 0, 0, 1, 0, 0, 0);
-save_statistics($weekly , $week_txt , 0, 0, 0, 1, 0, 0);
-save_statistics($monthly, $month_txt, 0, 0, 0, 0, 1, 0);
-save_statistics($seasonly,$season_txt,0, 0, 0, 0, 0, 1);
+save_statistics($max     , $max_txt   , 1, 0, 0, 0, 0, 0);
+save_statistics($hourly  , $hour_txt  , 0, 1, 0, 0, 0, 0);
+save_statistics($daily   , $date_txt  , 0, 0, 1, 0, 0, 0);
+save_statistics($weekly  , $week_txt  , 0, 0, 0, 1, 0, 0);
+save_statistics($monthly , $month_txt , 0, 0, 0, 0, 1, 0);
+save_statistics($seasonly, $season_txt, 0, 0, 0, 0, 0, 1);
 
 my $at             = $en ? "with"                 : "bei";
 my $and            = $en ? "and"                  : "und";
@@ -1844,6 +1848,9 @@ my $yield_portion  = $en ? "yield portion"        : "Ertragsanteil";
 my $nominal_sum = $#PV_nomin == 0 ? "" : " = $PV_nomin Wp";
 my $limits_sum = $total_limit == 0 ? "" :
     ", $limit_txt: ".$PV_limit." W".($#PV_limit == 0 ? "" : " $none_txt");
+
+print "$energy_txt $on_average_txt\n" if $years > 1;
+print "\n" unless $test;
 print "$nominal_txt $en2         =" .W($nominal_power_sum)."p$nominal_sum".
     "$only_during$limits_sum\n";
 print "$gross_max_txt $en4     =".W($PV_gross_max)." $PV_gross_max_time\n";
@@ -1917,11 +1924,12 @@ my $grid_feed_sum_alt = $PV_sum - $PV_used_sum;
 $grid_feed_sum_alt -= $coupling_loss + $spill_loss + $charging_loss
     + $storage_loss + $soc if defined $capacity;
 my $discrepancy = $grid_feed_sum - $grid_feed_sum_alt;
+my $cpl_loss2 = int($coupling_loss - $DC_feed_loss + .5) if defined $capacity;
 die "Internal error: overall (loss?) calculation discrepancy $discrepancy: ".
     "grid feed-in $grid_feed_sum vs. $grid_feed_sum_alt =\n".
     "PV ".($DC_coupled ? "DC" : "net")." sum "
     ."$PV_sum - PV used $PV_used_sum".(defined $capacity ?
         " - DC feed loss $DC_feed_loss - loss by spill $spill_loss".
         " - charging loss $charging_loss - storage loss $storage_loss".
-        " - coupling loss by 2nd inverter ".($coupling_loss - $DC_feed_loss).
-        " - SoC $soc" : "") if abs($discrepancy) > 0.001; # 1 mWh
+        " - coupling loss by 2nd inverter $cpl_loss2".
+        " - SoC ".int($soc + .5) : "") if abs($discrepancy) > 0.001; # 1 mWh

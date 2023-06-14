@@ -491,7 +491,6 @@ sub max_load {
     }
 }
 
-
 my $items_per_hour;
 my @items_by_hour;
 my @load_item;
@@ -500,6 +499,7 @@ my @load_per_hour;
 my @load_by_hour;
 my @load_by_weekday = (0,0,0,0,0,0,0);
 my @load_by_month = (0,0,0,0,0,0,0,0,0,0,0,0,0); # months starting at index 1
+
 sub get_profile {
     my @lines;
 
@@ -591,7 +591,7 @@ sub get_profile {
         my @sources = split ",", $lines[$hour_per_year % $hours];
         my $n = $#sources;
         my $year = $sources[0] =~ /((19|20)\d\d)/ ? $1 : "YYYY";
-        shift @sources; # ignore date & time info
+        shift @sources; # ignore month, day, and time info
         if ($items > 0 && $items != $n) {
             print "Warning: unequal number of items per line: $n vs. $items in "
                 ."$file\n";
@@ -622,11 +622,10 @@ sub get_profile {
         $load[$month][$day][$hour] = $hload;
         $day_load += $hload;
 
-        # adapt according to @load_dist, @load_factors, and $load_const
-        # $hour_per_year == $num_hours - 1 needed for $test
-        if (++$hour == 24 || $hour_per_year == $num_hours - 1) {
-            my $hour_end =
-                $test && $hour_per_year == $num_hours - 1 ? TEST_END % 24 : 24;
+        my $reached_end = $hour_per_year == $num_hours - 1; # needed for test
+        if (++$hour == 24 || $test && $reached_end) {
+            # adapt day according to @load_dist, @load_factors, and $load_const
+            my $hour_end = $test && $reached_end ? TEST_END % 24 : 24;
             for ($hour = 0; $hour < $hour_end; $hour++) {
                 my $sel = selected($month, $day, $hour);
                 $hload = $load[$month][$day][$hour];

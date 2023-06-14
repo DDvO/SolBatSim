@@ -406,22 +406,21 @@ sub check_consistency { my ($actual, $expected, $name, $file) = @_;
 
 my $no_time_txt = $en ? "at no time" : "zu keiner Zeit";
 
-sub date_string { my ($year, $month, $day, $hour) = @_;
+sub date_hour_str { my ($year, $month, $day, $hour) = @_;
     $year = "YYYY" if $year eq "0";
     my $at_txt = $en ? "at" : "am";
     # to support switching language of error output must not evaluate $en before
     return "$at_txt $year-".sprintf("%02d", $month)."-".sprintf("%02d", $day).
         " ".($en ? "at" : "um")." ".sprintf("%02d", $hour);
 }
-sub time_string {
-    return date_string(@_).sprintf(":%02d h", int($_[4]));
-
-}
-sub minute_string { my ($item, $items) = @_;
-    my $minute = sprintf(":%02d", int( 60 * $item / $items));
-    $minute .=   sprintf(":%02d", int((60 * $item % $items) / $items * 60))
+sub minute_str { my ($item, $items) = @_;
+    my $str = sprintf(":%02d", int( 60 * $item / $items));
+    $str .=   sprintf(":%02d", int((60 * $item % $items) / $items * 60))
         unless (60 % $items == 0);
-    return $minute
+    return $str
+}
+sub time_str {
+    return date_hour_str(@_).minute_str($_[4], $_[5]);
 }
 
 sub round_1000 { return round(shift() / 1000); }
@@ -487,7 +486,7 @@ sub max_load {
     my $load = shift;
     if ($load > $load_max) {
         $load_max = $load;
-        $load_max_time = time_string(@_);
+        $load_max_time = time_str(@_);
     }
 }
 
@@ -609,7 +608,7 @@ sub get_profile {
             if ($load <= 0) {
                 my $lang = $en;
                 $en = 1;
-                print "Warning: load ".date_string(0, $month, $day, $hour)
+                print "Warning: load ".date_hour_str(0, $month, $day, $hour)
                     .sprintf("h, item %4d", $item + 1)." = $load\n"
                     unless $test || $warned_just_before;
                 $en = $lang;
@@ -638,7 +637,7 @@ sub get_profile {
                     $sel_items ++ if $sel;
                     $hload = $load_const if defined $load_const;
                     $load_item[$month][$day][$hour][0] = $hload;
-                    max_load($hload, $year, $month, $day, $hour, 0) if $sel;
+                    max_load($hload, $year, $month, $day, $hour, 0, 60) if $sel;
                 } else {
                     my $orig_hload = $hload;
                     $hload = $load[$month][$day][$hour] = $load_factors[$hour] *
@@ -653,7 +652,7 @@ sub get_profile {
                             if defined $load_dist && $orig_hload != 0;
                         $load_item[$month][$day][$hour][$item] = $load;
                         max_load($load, $year, $month, $day, $hour,
-                                 60 * $item / $items) if $sel;
+                                 $item, $items) if $sel;
                     }
                 }
                 $load_sum += $hload;
@@ -891,7 +890,7 @@ sub get_power { my ($file, $nominal_power, $limit) = @_;
         die "Missing power data in $file line $_"
             unless m/^(\d\d\d\d)(\d\d)(\d\d):(\d\d)(\d\d),\s?([\d\.]+)/;
         my $hour_offset = $test ? 0 : TimeZone;
-        my ($year, $month, $day, $hour, $minute, $net_power) =
+        my ($year, $month, $day, $hour, $minute_unused, $net_power) =
             ($tmy ? 0 : $1-$start_year, $2, $3, ($4+$hour_offset) % 24, $5, $6);
         # for simplicity, attributing hours wrapped via time zone to same day
 
@@ -980,6 +979,8 @@ my $grid_feed_sum = 0;
 
 my $soc_max = $capacity *      $max_soc  if defined $capacity;
 my $soc_min = $capacity * (1 - $max_dod) if defined $capacity;
+my $soc_max_reached = $soc_min           if defined $capacity;
+my $soc_max_time = $no_time_txt;
 my $max_chgpower = $max_chgrate * $capacity / $charge_eff_never_0
     if defined $capacity;
 my $max_dispower = $max_disrate * $capacity / $storage_eff_never_0
@@ -1013,7 +1014,7 @@ sub simulate_item {
     my $load = $load_item[$month][$day][$hour][$item];
     die "Internal error: load_item[$month][$day][$hour][$item] is undefined"
         unless defined $load;
-    printf("%02d".minute_string($item, $items)." load=%4d PV net=%4d ",
+    printf("%02d".minute_str($item, $items)." load=%4d PV net=%4d ",
            $hour, $load, $pvnet_power + .5) if $test_started;
     # $needed += $load;
     # load will be reduced by constant $bypass or $bypass_spill
@@ -1121,6 +1122,10 @@ sub simulate_item {
 
             $charge_delta = $charge_input * $charge_eff;
             $soc += $charge_delta;
+            if ($soc > $soc_max_reached) {
+                $soc_max_reached = $soc;
+                $soc_max_time = time_str(0, $month, $day,$hour, $item, $items);
+            }
             $charging_loss += $charge_input - $charge_delta;
         } elsif ($test_started) {
             printf(" " x 39); # no $excess_power
@@ -1234,7 +1239,7 @@ sub simulate_item {
 }
 
 sub simulate_hour {
-    my ($year_str, $year, $month, $day, $hour, $minute,
+    my ($year_str, $year, $month, $day, $hour,
         $gross_power, $pvnet_power) = @_;
 
     my ($hpv_used, $hgrid_feed) = (0, 0);
@@ -1248,7 +1253,7 @@ sub simulate_hour {
     $PV_gross_across[$month][$day][$hour] += $gross_power;
     if ($gross_power > $PV_gross_max) {
         $PV_gross_max = $gross_power;
-        $PV_gross_max_time = time_string($year_str, $month, $day,$hour,$minute);
+        $PV_gross_max_time = date_hour_str($year_str, $month, $day, $hour)."h";
     }
     $PV_gross_sum += $gross_power;
 
@@ -1256,14 +1261,14 @@ sub simulate_hour {
     if ($curb && $pvnet_power > $curb) {
         $PV_loss = $pvnet_power - $curb;
         $PV_net[$year][$month][$day][$hour] = $pvnet_power = $curb;
-        # print "".time_string($year_str, $month, $day, $hour, $minute).
+        # print "".date_hour_str($year_str, $month, $day, $hour)."h".
         #"\tPV=".round($pvnet_power)."\tcurb=".round($curb).
         #"\tloss=".round($PV_losses)."\t$_\n";
     }
     $PV_net_across[$month][$day][$hour] += $pvnet_power;
     if ($pvnet_power > $PV_net_max) {
         $PV_net_max = $pvnet_power;
-        $PV_net_max_time = time_string($year_str, $month, $day, $hour, $minute);
+        $PV_net_max_time = date_hour_str($year_str, $month, $day, $hour)."h";
     }
     $PV_net_sum += $pvnet_power;
 
@@ -1289,6 +1294,7 @@ sub simulate_hour {
         $capacity *= $items;
         $soc_max *= $items;
         $soc_min *= $items;
+        $soc_max_reached *= $items;
         $soc *= $items;
         $charging_loss *= $items;
         $spill_loss *= $items;
@@ -1320,7 +1326,7 @@ sub simulate_hour {
         }
     }
     # $sum_needed += $needed / $items; # per hour
-    # print "".time_string($year_str, $month, $day, $hour, $minute)."\t".
+    # print "".date_hour_str($year_str, $month, $day, $hour)."h\t".
     # "PV=".round($pvnet_power)."\tPN=".round($needed)."\tPU=".round($hpv_used).
     # "\t$_\n" if $pvnet_power != 0 && m/^20160214:1010/; # m/^20....02:12/;
 
@@ -1338,6 +1344,7 @@ sub simulate_hour {
             $capacity /= $items;
             $soc_max /= $items;
             $soc_min /= $items;
+            $soc_max_reached /= $items;
             $soc /= $items;
             $charging_loss /= $items;
             $hcpl_loss /= $items;
@@ -1367,7 +1374,6 @@ sub simulate()
 {
     my $year = 0;
     ($month, $day, $hour) = (1, 1, 0);
-    my $minute = 0; # currently fixed
 
     if (defined $capacity) {
         # factor out $load_scale for optimizing the inner loop
@@ -1376,6 +1382,7 @@ sub simulate()
         $max_feed_scaled_by_eff /= $load_scale_never_0 if defined $max_feed;
         $soc_max  /= $load_scale_never_0;
         $soc_min  /= $load_scale_never_0;
+        $soc_max_reached /= $load_scale_never_0;
         $soc = $soc_min;
     }
 
@@ -1413,11 +1420,11 @@ sub simulate()
                 } else {
                     $en = 1;
                     die "No power data ".
-                        time_string($year_str, $month, $day, $hour, $minute);
+                        date_hour_str($year_str, $month, $day, $hour)."h";
                 }
             }
 
-            simulate_hour($year_str, $year, $month, $day, $hour, $minute,
+            simulate_hour($year_str, $year, $month, $day, $hour,
                           $gross_power, $pvnet_power);
         }
 
@@ -1453,6 +1460,7 @@ sub simulate()
         $soc -= $soc_min;
         $soc_max *= $load_scale_never_0;
         $soc_min *= $load_scale_never_0;
+        $soc_max_reached *= $load_scale_never_0;
         $soc     *= $load_scale;
         # also average storage-related sums over $years:
         $charge_sum          *= $load_scale / $years;
@@ -1638,13 +1646,13 @@ sub save_statistics {
         print $OU "$spill_loss_txt in kWh,"
             ."$charging_loss_txt in kWh,$storage_loss_txt in kWh,"
             ."$coupl_loss_txt $due_to $ieff2_txt in kWh,"
-            ."$own_storage_txt in kWh,$stored_txt in kWh,"
-            ."$cycles_txt $of_eff_cap_txt\n";
+            ."$own_storage_txt in kWh,$max_soc_txt in Wh $PV_net_max_time,"
+            ."$stored_txt in kWh,$cycles_txt $of_eff_cap_txt\n";
         print $OU "".round_1000($spill_loss * $inverter_eff).","
             .round_1000($charging_loss).",".round_1000($storage_loss).","
             .round_1000($coupling_loss).","
-            .round_1000($PV_used_via_storage).",".round_1000($charge_sum)
-            .",$cycles\n";
+            .round_1000($PV_used_via_storage).",".round($soc_max_reached)
+            .",".round_1000($charge_sum).",$cycles\n";
     }
 
     print $OU "\n";
@@ -1765,7 +1773,7 @@ sub save_statistics {
             for (my $i = 0; $sel && $i < ($max ? $items : 1); $i++) {
                 my $minute = $hourly ? ":00" : "";
                 if ($max) {
-                    $minute = minute_string($i, $items);
+                    $minute = minute_str($i, $items);
                     $hload =          $load_item[$mon_][$day_][$hour_][$i];
                     $loss = $PV_loss == 0 ? 0 :
                             $PV_use_loss_by_item[$mon_][$day_][$hour_][$i];
@@ -1897,6 +1905,8 @@ if (defined $capacity) {
         print "$c_txt$de2= @charge_per_hour[0..23]\n";
         print "$C_txt". " = @dischg_per_hour[0..23]\n";
     }
+    printf "$max_soc_txt               =%5d Wh $soc_max_time\n",
+        round($soc_max_reached);
     print "$stored_txt $en2$en2        =" .kWh($charge_sum)." $after $charging_loss_txt\n";
     printf "$cycles_txt $de1                =  %3d $of_eff_cap_txt\n", ($cycles + .5);
     print "\n";

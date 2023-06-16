@@ -9,9 +9,9 @@
 #   [-only <*|Jahr[..Jahr]>[-<*|Mon[..Mon]>[-<*|Tag[..Tag]>[:<*|Std[..Std]]]]]
 #   [-dist <relative Lastverteilung über den Tag pro Stunde 0,..,23>
 #   [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>
-#   [-load <konstante Last, auf gleicher Skala wie in der PV-Daten-Datei>
-#          [<Zahl der Tage pro Woche, sonst 5>:
-#           <von Uhrzeit, sonst 8 Uhr>..<bis Uhrzeit, sonst 16 Uhr>]]
+#   [-load [min] <konstante Last, auf gleicher Skala wie in der PV-Daten-Datei>
+#          [<Zahl der Tage pro Woche ab Montag, sonst 5>:<von Uhrzeit,
+#           sonst 8 Uhr>..<bis Uhrzeit, sonst 16 Uhr, auch über Mitternacht>]]
 #   [-avg_hour] [-verbose]
 #   [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
 #   [-ac | -dc] [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>]
@@ -62,9 +62,9 @@
 #   [-only <*|year[..year]>[-<*|mon[..mon]>[-<*|day[..day]>[:<*|hour[..hour]]]]]
 #   [-dist <relative load distribution over each day, per hour 0,..,23>
 #   [-bend <load distort factors for hour 0,..,23 each day, default 1>
-#   [-load <constant load, at same scale as in PV data file>
-#          [<count of days per week, default 5>:
-#           <from hour, default 8 o'clock>..<to hour, default 16>]]
+#   [-load [min] <constant load, at same scale as in PV data file>
+#          [<count of days per week starting Monday, default 5>:<from hour,
+#           default 8 o'clock>..<to hour, default 16>, also across midnight]]
 #   [-avg_hour] [-verbose]
 #   [-peff <PV system efficiency in %, default from PV data file(s)>]
 #   [-ac | -dc] [-capacity <storage capacity in Wh, default 0 (no battery)>]
@@ -118,6 +118,7 @@ my $consumption  = shift @ARGV # kWh/year, default is implicit from load profile
 
 my @load_dist;          # if set, relative load distribution per hour each day
 my @load_factors;       # load distortion factors per hour, on top of @load_dist
+my $load_min      = 0;  # modifies $load_const to mean constant minimal load
 my $load_const;         # constant load in W, during certain times as follows:
 my $avg_hour      = 0;  # use only the average of load items per hour
 my $verbose       = 0;  # verbose output, including averages/day for each hour
@@ -222,7 +223,9 @@ while ($#ARGV >= 0) {
     } elsif ($ARGV[0] eq "-only"    ) { $only         = str_arg();
     } elsif ($ARGV[0] eq "-dist"    ) { $load_dist    = str_arg();
     } elsif ($ARGV[0] eq "-bend"    ) { $load_factors = str_arg();
-    } elsif ($ARGV[0] eq "-load"    ) { $load_const   = num_arg();
+    } elsif ($ARGV[0] eq "-load"    ) { $load_min     = 1 if $#ARGV >= 1 &&
+                                            $ARGV[1] eq "min" && shift @ARGV;
+                                        $load_const   = num_arg();
                                        ($load_days, $load_from, $load_to)
                                            = ($1, $2, $3) if $#ARGV >= 0 &&
                                            $ARGV[0] =~ m/^(\d+):(\d+)\.\.(\d+)$/
@@ -280,10 +283,10 @@ use constant TEST_LOAD_LEN   =>
     TEST_END > TEST_DROP_END ? TEST_LENGTH - TEST_DROP_LEN
     : (TEST_END <= TEST_DROP_START ? TEST_END - TEST_START
        : TEST_DROP_START - TEST_START);
-my $test_drop_cons = defined $load_const && $load_from == TEST_DROP_START
+my $test_drop_const = defined $load_const && $load_from == TEST_DROP_START
     && $load_to == TEST_DROP_END ? $load_const * TEST_DROP_LEN : 0;
 my $test_load = defined $consumption ?
-    ($consumption * 1000 - $test_drop_cons) / TEST_LOAD_LEN : TEST_LOAD
+    ($consumption * 1000 - $test_drop_const) / TEST_LOAD_LEN : TEST_LOAD
     if $test;
 if ($test) {
     $load_profile  = "test load data";
@@ -619,6 +622,10 @@ sub get_profile {
         }
         $hload /= $n;
         $load[$month][$day][$hour] = $hload;
+        if ($avg_hour) {
+            $items_by_hour[$month][$day][$hour] = 1;
+            $load_item[$month][$day][$hour][0] = $hload;
+        }
         $day_load += $hload;
 
         my $reached_end = $hour_per_year == $num_hours - 1; # needed for test
@@ -628,33 +635,38 @@ sub get_profile {
             for ($hour = 0; $hour < $hour_end; $hour++) {
                 my $sel = selected($month, $day, $hour);
                 $hload = $load[$month][$day][$hour];
-                if ((defined $load_const && $weekday < $load_days &&
-                     ($load_from > $load_to
-                      ? ($load_from <= $hour || $hour < $load_to)
-                      : ($load_from <= $hour && $hour < $load_to)))
-                    || $avg_hour) {
+                my $load_const_sel = defined $load_const && $weekday < $load_days &&
+                    ($load_from > $load_to
+                     ? ($load_from <= $hour || $hour < $load_to)
+                     : ($load_from <= $hour && $hour < $load_to));
+                if (($load_const_sel && !$load_min)) {
                     $items_by_hour[$month][$day][$hour] = 1;
-                    $sel_items ++ if $sel;
-                    $hload = $load_const if defined $load_const;
-                    $load_item[$month][$day][$hour][0] = $hload;
+                    $load_item[$month][$day][$hour][0] = $hload = $load_const;
+                    $sel_items++ if $sel;
                     max_load($hload, $year, $month, $day, $hour, 0, 60) if $sel;
                 } else {
                     my $orig_hload = $hload;
-                    $hload = $load[$month][$day][$hour] = $load_factors[$hour] *
+                    my $ref_hload = $load[$month][$day][$hour] = $load_factors[$hour] *
                         (!defined $load_dist ? $hload :
                          $load_dist[$hour] * $day_load / $load_dist_sum);
                     my $items = $items_by_hour[$month][$day][$hour];
                     $sel_items += $items if $sel;
+                    $hload = 0; # need re-calculation at least with $load_min
                     for (my $item = 0; $item < $items; $item++) {
                         my $load = $load_item[$month][$day][$hour][$item]
                             * $load_factors[$hour];
-                        $load *= $hload / $orig_hload
+                        $load *= $ref_hload / $orig_hload
                             if defined $load_dist && $orig_hload != 0;
+                        $load = $load_const if (!$test || $hour >= TEST_START)
+                            && $load_const_sel && $load_min && $load < $load_const;
                         $load_item[$month][$day][$hour][$item] = $load;
                         max_load($load, $year, $month, $day, $hour,
                                  $item, $items) if $sel;
+                        $hload += $load;
                     }
+                    $hload /= $items;
                 }
+                $load[$month][$day][$hour] = $hload;
                 $load_sum += $hload;
                 $hload = 0 unless $sel;
                 $night_sum += $hload
@@ -1506,7 +1518,8 @@ my $PV_txt   = $DC_coupled ? $PV_DC_txt             : $PV_net_txt;
 my $of_yield         = $en ? "of $PV_txt"     :"des $PV_txt"."s (Nutzungsgrad)";
 my $of_consumption   = $en ? "of consumption" : "des Verbrauchs (Autarkiegrad)";
 my $PV_loss_txt      = $en ? "PV yield net loss"    : "PV-Netto-Ertragsverlust";
-my $load_const_txt   = $en ? "constant load"        : "Konstante Last";
+my $load_const_txt   = $en ? ($load_min ? "minimal"   : "constant")." load"
+                           : ($load_min ? "Minimale " : "Konstante")." Last";
 my $load_during_txt  =($load_days == 7 ? "" :
                        ($en ? "on the first $load_days days a week"
                             : "an den ersten $load_days Tagen der Woche")).
@@ -1876,8 +1889,8 @@ print "$PV_net_txt $en2             =" .kWh($PV_net_sum).
 
 print "\n";
 print "$consumpt_txt $de2                =".kWh($sel_load_sum)." $load_only\n";
-print "$load_const_txt $en1             =".W($load_const)."  $load_during_txt\n"
-    if defined $load_const;
+print "$load_const_txt $en1 ".($load_min ? "$en1" : "")."            ="
+    .W($load_const)." $load_during_txt\n" if defined $load_const;
 if (defined $capacity) {
     print "\n".
         "$capacity_txt $en1          =" .W($capacity)."h $with"

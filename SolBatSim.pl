@@ -410,7 +410,7 @@ sub check_consistency { my ($actual, $expected, $name, $file) = @_;
 my $no_time_txt = $en ? "at no time" : "zu keiner Zeit";
 
 sub date_hour_str { my ($year, $month, $day, $hour) = @_;
-    $year = "YYYY" if $year eq "0";
+    $year = "*" if $year eq "0";
     my $at_txt = $en ? "at" : "am";
     # to support switching language of error output must not evaluate $en before
     return "$at_txt $year-".sprintf("%02d", $month)."-".sprintf("%02d", $day).
@@ -592,7 +592,7 @@ sub get_profile {
     for (my $hour_per_year = 0; $hour_per_year < $num_hours; $hour_per_year++) {
         my @sources = split ",", $lines[$hour_per_year % $hours];
         my $n = $#sources;
-        my $year = $sources[0] =~ /((19|20)\d\d)/ ? $1 : "YYYY";
+        my $year = $sources[0] =~ /((19|20)\d\d)/ ? $1 : "0";
         shift @sources; # ignore month, day, and time info
         if ($items > 0 && $items != $n) {
             print "Warning: unequal number of items per line: $n vs. $items in "
@@ -746,7 +746,7 @@ my $lhs_spaces = " " x length("$W_txt$en1");
 
 my $only_during = $only ?" $only_txt $during_txt $only" : "";
 $only =~ s/^[^-]*-// if $only; # chop year restriction
-my $load_only = $only ? "$only_txt $during_txt YYYY-$only" : "$yearly_txt";
+my $load_only = $only ? "$only_txt $during_txt *-$only" : "$yearly_txt";
 
 print "$profile_txt$de1$s10 : $load_profile\n" unless $test;
 if ($verbose) {

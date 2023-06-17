@@ -718,6 +718,7 @@ my $yearly_txt  = $en ? "over a year"           : "über ein Jahr";
 my $values_txt  = $en ? "values"                : "Werte";
 my $only_txt    = $en ? "only"                  : "nur";
 my $during_txt  = $en ? "during"                : "während";
+my $TMY         = "TMY (2008..2020)";
 my $simul_year  = $en ? "simulated PV year"     : "Simuliertes PV-Jahr";
 my $energy_txt  = $en ? "energy values are"     : "Energiewerte sind";
 my $p_txt = $en ? "load data points per hour  " : "Last-Datenpunkte pro Stunde";
@@ -1417,7 +1418,7 @@ sub simulate()
     print "$simul_year$en2         ="
         unless $test;
     while ($year < $end_year) {
-        my $year_str = $tmy ? "TMY (2008..2020)" : $start_year + $year;
+        my $year_str = $tmy ? "TMY" : $start_year + $year;
         $PV_loss[$month][$day][$hour] = 0 if $curb && $year == $first_year;
 
         # restrict simulation to month, day, and hour given by the -only option
@@ -1443,7 +1444,7 @@ sub simulate()
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
         if ($month > 12) {
-            print " $year_str" unless $test;
+            print " ".($tmy ? "$TMY" : $year_str) unless $test;
             ($year, $month, $day) = ($year + 1, 1, 1);
         }
         last if $test && ($day - 1) * 24 + $hour == TEST_END;
@@ -1628,7 +1629,7 @@ sub save_statistics {
     print $OU "$consumpt_txt $load_only in kWh,$profile_txt,";
     print $OU "$load_const_txt in W $load_during_txt," if defined $load_const;
     print $OU "$M_txt in W $load_max_time,";
-    print $OU "$pv_data_txt$plural_txt$only_during\n";
+    print $OU "$pv_data_txt$plural_txt".($tmy ? " $during_txt $TMY" : "")."$only_during\n";
     print $OU "".round_1000($sel_load_sum).",$load_profile,";
     print $OU "$load_const," if defined $load_const;
     print $OU round($load_max).",".join(",", @PV_files)."\n";

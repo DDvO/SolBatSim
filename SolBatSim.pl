@@ -1520,9 +1520,12 @@ my $of_consumption   = $en ? "of consumption" : "des Verbrauchs (Autarkiegrad)";
 my $PV_loss_txt      = $en ? "PV yield net loss"    : "PV-Netto-Ertragsverlust";
 my $load_const_txt   = $en ? ($load_min ? "minimal"   : "constant")." load"
                            : ($load_min ? "Minimale " : "Konstante")." Last";
+my @weekdays         = $en ? ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+                           : ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So");
+my $dx = $load_days - 1;
 my $load_during_txt  =($load_days == 7 ? "" :
-                       ($en ? "on the first $load_days days a week"
-                            : "an den ersten $load_days Tagen der Woche")).
+                       ($en ? ($load_days == 1 ? "an Mondays"  : "on Mon..$weekdays[$dx]")
+                            : ($load_days == 1 ? "an Montagen" : "an Mo..$weekdays[$dx]"))).
                       (($load_from == 0 && $load_to == 24) ? "" :
                        ($en ? " from $load_from to $load_to h"
                            : " von $load_from bis $load_to Uhr"))
@@ -1628,7 +1631,7 @@ sub save_statistics {
     print $OU "$pv_data_txt$plural_txt$only_during\n";
     print $OU "".round_1000($sel_load_sum).",$load_profile,";
     print $OU "$load_const," if defined $load_const;
-    print $OU int($load_max).",".join(",", @PV_files)."\n";
+    print $OU round($load_max).",".join(",", @PV_files)."\n";
 
     print $OU "$nominal_txt in Wp,$limit_txt in W $none_txt,"
         ."$gross_max_txt in W $PV_gross_max_time,"
@@ -1710,7 +1713,7 @@ sub save_statistics {
         .(defined $capacity ? ",$charge_txt,$dischg_after_txt,$soc_txt" : "")
         ."\n";
     sub SUM { my ($I, $i, $j) = @_;
-        return "=INT(SUM($I$i:$I$j))";
+        return "=ROUND(SUM($I$i:$I$j))";
     }
     print $OU "$sum_avg,".SUM("B", $i, $j).",".SUM("C", $i, $j)
         .",".SUM("D", $i, $j).",".SUM("E", $i, $j).",".SUM("F", $i, $j)
@@ -1940,7 +1943,7 @@ my $grid_feed_sum_alt = $PV_sum - $PV_used_sum;
 $grid_feed_sum_alt -= $coupling_loss + $spill_loss + $charging_loss
     + $storage_loss + $soc if defined $capacity;
 my $discrepancy = $grid_feed_sum - $grid_feed_sum_alt;
-my $cpl_loss2 = int($coupling_loss - $DC_feed_loss + .5) if defined $capacity;
+my $cpl_loss2 = round($coupling_loss - $DC_feed_loss) if defined $capacity;
 die "Internal error: overall (loss?) calculation discrepancy $discrepancy: ".
     "grid feed-in $grid_feed_sum vs. $grid_feed_sum_alt =\n".
     "PV ".($DC_coupled ? "DC" : "net")." sum "
@@ -1948,4 +1951,4 @@ die "Internal error: overall (loss?) calculation discrepancy $discrepancy: ".
         " - DC feed loss $DC_feed_loss - loss by spill $spill_loss".
         " - charging loss $charging_loss - storage loss $storage_loss".
         " - coupling loss by 2nd inverter $cpl_loss2".
-        " - SoC ".int($soc + .5) : "") if abs($discrepancy) > 0.001; # 1 mWh
+        " - SoC ".round($soc) : "") if abs($discrepancy) > 0.001; # 1 mWh

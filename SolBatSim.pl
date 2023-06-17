@@ -1622,13 +1622,13 @@ sub save_statistics {
 
     my $nominal_sum = $#PV_nomin == 0 ? $PV_nomin[0] : "$PV_nomin";
     my $limits_sum  = $#PV_limit == 0 ? $PV_limit[0] : "$PV_limit";
-    print $OU "$consumpt_txt $load_only in kWh,";
+    print $OU "$consumpt_txt $load_only in kWh,$profile_txt,";
     print $OU "$load_const_txt in W $load_during_txt," if defined $load_const;
-    print $OU "$profile_txt,$M_txt in W $load_max_time,";
+    print $OU "$M_txt in W $load_max_time,";
     print $OU "$pv_data_txt$plural_txt$only_during\n";
-    print $OU "".round_1000($sel_load_sum).",";
+    print $OU "".round_1000($sel_load_sum).",$load_profile,";
     print $OU "$load_const," if defined $load_const;
-    print $OU "$load_profile,".int($load_max).",".join(",", @PV_files)."\n";
+    print $OU int($load_max).",".join(",", @PV_files)."\n";
 
     print $OU "$nominal_txt in Wp,$limit_txt in W $none_txt,"
         ."$gross_max_txt in W $PV_gross_max_time,"

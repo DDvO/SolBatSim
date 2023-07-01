@@ -25,7 +25,7 @@
 #   [-seff <Speicher-Wirkungsgrad in %, ansonsten 95>]
 #   [-ieff <Wechselrichter-Wirkungsgrad in %, ansonsten 94>]
 #   [-ieff2 <Wirkungsgrad des Entlade-Wechselrichters in %, Standard von -ieff>]
-#   [-test <Lastpunkte pro Stunde, für Prüfberechnung über 24 Stunden>]
+#   [-debug] [-test <Lastpunkte pro Stunde, für Prüfberechnung über 24 Stunden>]
 #   [-en] [-tmy] [-curb <Wechselrichter-Ausgangs-Drosselung in W>]
 #   [-hour <Statistik-Datei>] [-day <Stat.Datei>] [-week <Stat.Datei>]
 #   [-month <Stat.Datei>] [-season <Stat.Datei>] [-max <Stat.Datei>]
@@ -78,7 +78,7 @@
 #   [-seff <storage efficiency in %, default 95>]
 #   [-ieff <inverter efficiency in %, default 94>]
 #   [-ieff2 <efficiency of discharge inverter in %, default from -ieff>]
-#   [-test <load points per hour, for debug calculation over 24 hours>]
+#   [-debug] [-test <load points per hour, for using test data over 24 hours>]
 #   [-en] [-tmy] [-curb <inverter output power limitation in W>]
 #   [-hour <statistics file>] [-day <stat file>] [-week <stat file>]
 #   [-month <stat file>] [-season <file>] [-max <stat file>]
@@ -110,7 +110,8 @@
 use strict;
 use warnings;
 
-my $test         = 0;   # unless 0, number of test load points per houra
+my $test         = 0;   # unless 0, number of test load points per hour
+my $debug        = 0;   # turn on debug output, implied by $test != 0
 die "Missing command line arguments" if $#ARGV < 0;
 my $load_profile = shift @ARGV unless $ARGV[0] =~ m/^-/; # file name
 my $consumption  = shift @ARGV # kWh/year, default is implicit from load profile
@@ -219,6 +220,7 @@ my ($en, $only, $tmy, $curb,
     $max, $hourly, $daily, $weekly,  $monthly, $seasonly);
 while ($#ARGV >= 0) {
     if      ($ARGV[0] eq "-test"    ) { $test         = num_arg();
+    } elsif ($ARGV[0] eq "-debug"   ) { $debug        =  no_arg();
     } elsif ($ARGV[0] eq "-en"      ) { $en           =  no_arg();
     } elsif ($ARGV[0] eq "-only"    ) { $only         = str_arg();
     } elsif ($ARGV[0] eq "-dist"    ) { $load_dist    = str_arg();
@@ -289,6 +291,7 @@ my $test_load = defined $consumption ?
     ($consumption * 1000 - $test_drop_const) / TEST_LOAD_LEN : TEST_LOAD
     if $test;
 if ($test) {
+    $debug         = 1;
     $load_profile  = "test load data";
     my $pv_nomin   = $#PV_nomin < 0 ? TEST_PV_NOMIN : $PV_nomin[0]; # in W
     my $pv_limit   = $#PV_limit < 0 ? TEST_PV_LIMIT : $PV_limit[0]; # in W
@@ -749,6 +752,7 @@ my $only_during = $only ?" $only_txt $during_txt $only" : "";
 $only =~ s/^[^-]*-// if $only; # chop year restriction
 my $load_only = $only ? "$only_txt $during_txt *-$only" : "$yearly_txt";
 
+print "load_scale                  = $load_scale\n" if $debug && !$test;
 print "$profile_txt$de1$s10 : $load_profile\n" unless $test;
 if ($verbose) {
     print "$p_txt = ".sprintf("%4d", $items_per_hour)."\n";
@@ -1018,8 +1022,8 @@ my $storage_loss  = 0 if defined $capacity;
 my $coupling_loss = 0 if defined $capacity;
 
 sub simulate_item {
-    my ($year_unused, $month, $day, $hour, $gross_power, $pvnet_power,
-        $item, $items, $test_started, $PV_loss, $PV_loss_capa) = @_;
+    my ($year_str, $month, $day, $hour, $gross_power, $pvnet_power,
+        $item, $items, $trace, $PV_loss, $PV_loss_capa) = @_;
     # $gross_power is used only with DC-coupled charging
     # $pvnet_power is the main input for simulation
     # $PV_loss is upper limit for PV net usage loss computation on $curb
@@ -1027,8 +1031,11 @@ sub simulate_item {
     my $load = $load_item[$month][$day][$hour][$item];
     die "Internal error: load_item[$month][$day][$hour][$item] is undefined"
         unless defined $load;
-    printf("%02d".minute_str($item, $items)." load=%4d PV net=%4d ",
-           $hour, $load, $pvnet_power + .5) if $test_started;
+    if ($trace) {
+        printf("%s-%02d-%02d ", $year_str, $month, $day) unless $test;
+        printf("%02d".minute_str($item, $items)." load=%4d PV net=%4d ",
+               $hour, $load, $pvnet_power + .5);
+    }
     # $needed += $load;
     # load will be reduced by constant $bypass or $bypass_spill
 
@@ -1059,7 +1066,7 @@ sub simulate_item {
             $unused_bypass = 0;
         }
         printf("bypass grid=%4d,used=%4d ",
-               $unused_bypass + .5, $pv_used + .5) if $test_started;
+               $unused_bypass + .5, $pv_used + .5) if $trace;
     }
     my $power_needed = $load - $pv_used;
 
@@ -1074,9 +1081,9 @@ sub simulate_item {
         my $capacity_to_fill = $soc_max - $soc;
         $capacity_to_fill = 0 if $capacity_to_fill < 0;
         my $charge_input = 0;
-        my $test_blank_no_surplus = " " x
+        my $trace_blank_no_surplus = " " x
             (defined $bypass ? ($bypass_spill || $AC_coupled ? 28 : 11): 18)
-            if $test_started;
+            if $trace;
         if ($excess_power > 0) {
             # $excess_power is the power available for charging
 
@@ -1089,9 +1096,9 @@ sub simulate_item {
             # will become min($excess_power, $limited_fill);
             my $surplus = $excess_power - $limited_fill;
             printf("[excess=%4d,tofill=%4d,surplus=%4d] ", $excess_power + .5,
-                   $need_for_fill + .5, max($surplus, 0) + .5) if $test_started;
+                   $need_for_fill + .5, max($surplus, 0) + .5) if $trace;
             if ($surplus > 0) {
-                printf "rate limit, " if $test_started
+                printf "rate limit, " if $trace
                     && $limited_fill < $need_for_fill; # else SoC limit
                 $charge_input = $limited_fill;
                 # TODO properly handle simultaneous charge and discharge
@@ -1104,7 +1111,7 @@ sub simulate_item {
                 if (!defined $bypass) { # i.e., on optimal charge
                     $grid_feed_in += $surplus_net;
                     printf("surplus feed=%4d ", $surplus_net + .5)
-                        if $test_started;
+                        if $trace;
                 } elsif ($bypass_spill || $AC_coupled) {
                     my $remaining_surplus = $surplus_net -$power_needed;
                     my $used_surplus = $power_needed;
@@ -1116,14 +1123,14 @@ sub simulate_item {
                     $power_needed -= $used_surplus;
                     $grid_feed_in += $remaining_surplus;
                     printf("surplus feed=%4d,used=%4d ", $remaining_surplus +.5,
-                           $used_surplus + .5) if $test_started;
+                           $used_surplus + .5) if $trace;
                 } else {
                     # defined $bypass && !$bypass_spill && $DC_coupled
                     $spill_loss += $surplus;
-                    printf("spill=%4d ", $surplus +.5) if $test_started;
+                    printf("spill=%4d ", $surplus +.5) if $trace;
                 }
-            } elsif ($test_started) {
-                printf($test_blank_no_surplus);
+            } elsif ($trace) {
+                printf($trace_blank_no_surplus);
             }
 
             # add reduced charging due to curb to potential usage losses
@@ -1140,16 +1147,16 @@ sub simulate_item {
                 $soc_max_time = time_str(0, $month, $day,$hour, $item, $items);
             }
             $charging_loss += $charge_input - $charge_delta;
-        } elsif ($test_started) {
+        } elsif ($trace) {
             printf(" " x 39); # no $excess_power
-            printf($test_blank_no_surplus);
+            printf($trace_blank_no_surplus);
         }
-        my $print_charge = $test_started &&
+        my $trace_charge = $trace &&
             ($excess_power > 0 || $soc > $soc_min);
         printf("chrg loss=%4d dischrg needed=%4d [SoC %4d + %4d ",
                $charge_input - $charge_delta + .5,
                $power_needed + .5, $soc - $charge_delta + .5,
-               $charge_delta + .5) if $print_charge;
+               $charge_delta + .5) if $trace_charge;
 
         ## add reduced discharging due to curb to potential usage losses
         ## - well, this would be just approximate:
@@ -1187,7 +1194,7 @@ sub simulate_item {
             }
             printf("- %4d%s - lost:%4d", $discharge * $storage_eff + .5,
                    $limited, $discharge * (1 - $storage_eff) + .5)
-                if $test_started;
+                if $trace;
             if ($discharge != 0) {
                 $soc -= $discharge; # includes storage loss
                 $discharge *= $storage_eff;
@@ -1211,22 +1218,22 @@ sub simulate_item {
                     if $unused_bypass == 0 && $PV_loss != 0; # implies $curb
             }
         } else {
-            print "                   " if $test_started;
+            print "                   " if $trace;
         }
-        # printf("= %4d] ", $soc + .5) if $print_charge;
-        printf("] ") if $print_charge;
-        printf("dischg loss=%4d ", $dischg_loss + .5) if $print_charge;
+        # printf("= %4d] ", $soc + .5) if $trace_charge;
+        printf("] ") if $trace_charge;
+        printf("dischg loss=%4d ", $dischg_loss + .5) if $trace_charge;
         if ($max) {
             $charge_by_item[$month][$day][$hour][$item] += $charge_delta;
             $dischg_by_item[$month][$day][$hour][$item] += $dischg_delta;
         }
         $soc_by_item[$month][$day][$hour][$item] += $soc;
-        printf(" " x (53 + 17)) if $test_started && !$print_charge;
+        printf(" " x (53 + 17)) if $trace && !$trace_charge;
     } elsif ($excess_power > 0) {
         $grid_feed_in = $excess_power;
     }
 
-    if ($test_started) {
+    if ($trace) {
         printf("used=%4d feed=%4d", $pv_used + .5, $grid_feed_in + .5);
         printf(" missing=%4d", $power_missing + .5) if $PV_loss != 0;
     }
@@ -1240,11 +1247,11 @@ sub simulate_item {
         $pv_use_loss = min($PV_loss_curr, $power_missing);
         $PV_use_loss_by_item[$month][$day][$hour][$item]+= $pv_use_loss if $max;
         $PV_use_loss_hours++; # will be normalized by $sel_items
-        printf(" curb loss=%4d", $pv_use_loss + .5) if $test_started;
+        printf(" curb loss=%4d", $pv_use_loss + .5) if $trace;
     } elsif ($PV_loss != 0 && $max) {
         $PV_use_loss_by_item[$month][$day][$hour][$item] += 0;
     }
-    printf "\n" if $test_started;
+    printf "\n" if $trace;
 
     return ($pv_used, $pv_use_loss, $grid_feed_in,
             $charge_delta, $dischg_delta, $coupling_loss);
@@ -1314,12 +1321,12 @@ sub simulate_hour {
         $PV_used_via_storage *= $items;
     }
 
-    my $test_started = $test && ($day - 1) * 24 + $hour >= TEST_START;
+    my $trace = $test ? ($day - 1) * 24 + $hour >= TEST_START : $debug;
     # my $feed_sum = 0 if defined $max_feed_scaled_by_eff;
     for (my $item = 0; $item < $items; $item++) {
         my ($pvu, $pul, $gfi, $chg, $dis, $cpl) =
-        simulate_item($year, $month, $day, $hour, $gross_power, $pvnet_power,
-                      $item, $items, $test_started, $PV_loss, $PV_loss_capa);
+        simulate_item($year_str, $month, $day, $hour, $gross_power, $pvnet_power,
+                      $item, $items, $trace, $PV_loss, $PV_loss_capa);
         ($hpv_used += $pvu, $hgrid_feed += $gfi);
         $hpv_use_loss += $pul if $curb;
         ($hcharge_delta += $chg, $hdischg_delta += $dis, $hcpl_loss += $cpl)
@@ -1419,6 +1426,10 @@ sub simulate()
         unless $test;
     while ($year < $end_year) {
         my $year_str = $tmy ? "TMY" : $start_year + $year;
+        my $year_str_TMY = " ".($tmy ? "$TMY" : $year_str);
+        print "$year_str_TMY\n" if !$test && $debug
+            && $month == 1 && $day == 1 && $hour == 0;
+
         $PV_loss[$month][$day][$hour] = 0 if $curb && $year == $first_year;
 
         # restrict simulation to month, day, and hour given by the -only option
@@ -1444,12 +1455,12 @@ sub simulate()
         $hour = 0 if ++$hour == 24;
         adjust_day_month();
         if ($month > 12) {
-            print " ".($tmy ? "$TMY" : $year_str) unless $test;
+            print $year_str_TMY if !$test && !$debug;
             ($year, $month, $day) = ($year + 1, 1, 1);
         }
         last if $test && ($day - 1) * 24 + $hour == TEST_END;
     }
-    print "\n";
+    print "\n" if $test || !$debug;
     STDOUT->autoflush(0);
 
     # average sums over $years:

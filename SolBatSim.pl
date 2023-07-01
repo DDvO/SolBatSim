@@ -159,7 +159,7 @@ my $storage_eff;      # storage efficiency; default see below
 while ($#ARGV >= 0 && $ARGV[0] =~ m/^\s*[^-]/) {
     push @PV_files, shift @ARGV; # PV data file
     push @PV_direct,$#ARGV >= 0 && $ARGV[0] =~ m/^direct$/  ? shift @ARGV : 0;
-    push @PV_nomin, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : 0;
+    push @PV_nomin, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : undef;
     push @PV_limit, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : 0;
 }
 
@@ -864,7 +864,7 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
                     "taking value $nominal_power from command line\n";
                 $nominal_power_deflt = $nominal_power;
             }
-            $nominal_power = $nominal_power_deflt unless $nominal_power;
+            $nominal_power = $nominal_power_deflt unless defined $nominal_power;
 
             unless ($pvsys_eff || defined $pvsys_eff_deflt) {
                 print "\nWarning: cannot find system efficiency in $file and ".

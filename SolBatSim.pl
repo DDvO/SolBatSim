@@ -16,7 +16,7 @@
 #   [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
 #   [-ac | -dc] [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>]
 #   [-pass [spill] <konstante Speicher-Umgehung in W zusätzlich zu 'direct',
-#                   mit 'spill'-Option auch bei Überlauf, d.h. vollem Speicher>]
+#                   mit 'spill' or AC-Kopplung auch bei vollem Speicher>]
 #   [-feed (max <begrenzte bedarfsgerechte Entladung aus Speicher in W>
 #           | [<von Uhrzeit, sonst 0 Uhr>..<bis Uhrzeit, sonst 24 Uhr>]
 #             <konstante Entladung aus Speicher in W> )]
@@ -37,7 +37,7 @@
 # Wenn PV-Daten für mehrere Jahre gegeben sind, wird der Durchschnitt berechnet
 # oder mit Option "-tmy" Monate für ein typisches meteorologisches Jahr gewählt.
 #
-# Beim Speicher ist AC-Kopplung Standard. Dabei zwei WR mit Verlusten, aber
+# Beim Speicher ist AC-Kopplung Standard. Dabei Verluste durch zweimal WR, aber
 # kein Überlauf. DC-gekoppelte Ladung umgeht den ersten WR und seine Limits.
 #
 # Mit den Optionen "-hour"/"-day"/"-week"/"-month" wird jeweils eine CSV-Datei
@@ -70,7 +70,7 @@
 #   [-peff <PV system efficiency in %, default from PV data file(s)>]
 #   [-ac | -dc] [-capacity <storage capacity in Wh, default 0 (no battery)>]
 #   [-pass [spill] <constant storage bypass in W in addition to 'direct',
-#                   with 'spill' option also on surplus (when storage full)>]
+#                   with 'spill' or AC coupling also when storage is full>]
 #   [-feed (max <limited feed-in from storage in W according to load>
 #           | [<von Uhrzeit, sonst 0 Uhr>..<bis Uhrzeit, sonst 24 Uhr>]
 #             <constant feed-in from storage in W> )]
@@ -92,7 +92,7 @@
 # with the option "-tmy" months for a typical meteorological year are selected.
 #
 # With storage, AC-coupled charging is the default. It has extra inverter loss,
-# but no spill loss. DC-copuled charging bypasses first inverter and its limits.
+# but no spill loss. DC-coupled charging bypasses first inverter and its limits.
 #
 # With each the options "-hour"/"-day"/"-week"/"-month" a CSV file is produced
 # with the given name containing with statistical data per hour/day/week/month.
@@ -143,7 +143,7 @@ my $inverter_eff;     # PV inverter efficiency; default see below
 my $inverter2_eff;    # discharging inverter efficiency; default from above
 my $capacity;         # nominal storage capacity in Wh on average degradation
 my $bypass;           # direct const feed-in to inverter in W, bypassing storage
-my $bypass_spill;     # bypass storage on surplus (i.e., when storge is full)
+my $bypass_spill;     # bypass storage when it is full, implied by $AC_coupled
 my $max_feed;         # maximal feed-in in W from storage
 my $const_feed  =  1; # constant feed-in, relevant only if defined $max_feed
 my $feed_from   =  0; # hour of constant feed-in begin
@@ -395,6 +395,7 @@ if (defined $capacity) {
     $AC_coupled = 0;
 }
 my $DC_coupled = defined $capacity && !$AC_coupled;
+$bypass_spill = 1 if $AC_coupled;
 
 sub never_0 { return $_[0] == 0 ? 1 : $_[0]; }
 my $pvsys_eff_never_0;
@@ -1102,7 +1103,7 @@ sub simulate_item {
         $capacity_to_fill = 0 if $capacity_to_fill < 0;
         my $charge_input = 0;
         my $trace_blank_no_surplus = " " x
-            (defined $bypass ? ($bypass_spill || $AC_coupled ? 28 : 11): 18)
+            (defined $bypass ? ($bypass_spill ? 28 : 11): 18)
             if $trace;
         if ($excess_power > 0) {
             # $excess_power is the power available for charging
@@ -1132,7 +1133,7 @@ sub simulate_item {
                     $grid_feed_in += $surplus_net;
                     printf("surplus feed=%4d ", $surplus_net + .5)
                         if $trace;
-                } elsif ($bypass_spill || $AC_coupled) {
+                } elsif ($bypass_spill) {
                     my $remaining_surplus = $surplus_net -$power_needed;
                     my $used_surplus = $power_needed;
                     if ($remaining_surplus < 0) {

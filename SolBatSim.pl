@@ -5,7 +5,7 @@
 # und optional mit Stromspeicher (Batterie o.ä.)
 #
 # Nutzung: Solar.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
-#   (<PV-Daten-Datei> [<Nominalleistung in Wp> [<WR-Eingangsbegrenzung in W>]])+
+#   (<PV-Datei> [direct] [<Nominalleistung Wp> [<WR-Eingangsbegrenzung in W>]])+
 #   [-only <*|Jahr[..Jahr]>[-<*|Mon[..Mon]>[-<*|Tag[..Tag]>[:<*|Std[..Std]]]]]
 #   [-dist <relative Lastverteilung über den Tag pro Stunde 0,..,23>
 #   [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>
@@ -15,7 +15,8 @@
 #   [-avg_hour] [-verbose]
 #   [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
 #   [-ac | -dc] [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>]
-#   [-pass [spill] <Speicher-Umgehung in W, opt. auch bei Überfluss>]
+#   [-pass [spill] <konstante Speicher-Umgehung in W zusätzlich zu 'direct',
+#                   mit 'spill'-Option auch bei Überlauf, d.h. vollem Speicher>]
 #   [-feed (max <begrenzte bedarfsgerechte Entladung aus Speicher in W>
 #           | [<von Uhrzeit, sonst 0 Uhr>..<bis Uhrzeit, sonst 24 Uhr>]
 #             <konstante Entladung aus Speicher in W> )]
@@ -58,7 +59,7 @@
 # Optionally with energy storage (using a battery or the like).
 #
 # Usage: Solar.pl <load profile file> [<consumption per year in kWh>]
-#   (<PV data file> [<nominal power in Wp> [<inverter input limit in W]])+
+#   (<PV file> [direct] [<nominal power in Wp> [<inverter input limit in W]])+
 #   [-only <*|year[..year]>[-<*|mon[..mon]>[-<*|day[..day]>[:<*|hour[..hour]]]]]
 #   [-dist <relative load distribution over each day, per hour 0,..,23>
 #   [-bend <load distort factors for hour 0,..,23 each day, default 1>
@@ -68,7 +69,8 @@
 #   [-avg_hour] [-verbose]
 #   [-peff <PV system efficiency in %, default from PV data file(s)>]
 #   [-ac | -dc] [-capacity <storage capacity in Wh, default 0 (no battery)>]
-#   [-pass [spill] <storage bypass in W, optionally also on surplus>]
+#   [-pass [spill] <constant storage bypass in W in addition to 'direct',
+#                   with 'spill' option also on surplus (when storage full)>]
 #   [-feed (max <limited feed-in from storage in W according to load>
 #           | [<von Uhrzeit, sonst 0 Uhr>..<bis Uhrzeit, sonst 24 Uhr>]
 #             <constant feed-in from storage in W> )]
@@ -132,6 +134,7 @@ use constant YearHours => 24 * 365;
 use constant TimeZone => 1; # CET/MEZ
 
 my @PV_files;         # PV data input file(s), one per string
+my @PV_direct;        # with storage, bypass it for respective PV output string
 my @PV_nomin;         # nominal PV output(s), default from PV data file(s)
 my @PV_limit;         # power limit at inverter input, default 0 (none)
 my ($lat, $lon);      # optional, from PV data file(s)
@@ -139,7 +142,7 @@ my $pvsys_eff;        # PV system efficiency, default from PV data file(s)
 my $inverter_eff;     # PV inverter efficiency; default see below
 my $inverter2_eff;    # discharging inverter efficiency; default from above
 my $capacity;         # nominal storage capacity in Wh on average degradation
-my $bypass;           # direct feed-in to inverter in W, bypassing storage
+my $bypass;           # direct const feed-in to inverter in W, bypassing storage
 my $bypass_spill;     # bypass storage on surplus (i.e., when storge is full)
 my $max_feed;         # maximal feed-in in W from storage
 my $const_feed  =  1; # constant feed-in, relevant only if defined $max_feed
@@ -155,6 +158,7 @@ my $storage_eff;      # storage efficiency; default see below
 
 while ($#ARGV >= 0 && $ARGV[0] =~ m/^\s*[^-]/) {
     push @PV_files, shift @ARGV; # PV data file
+    push @PV_direct,$#ARGV >= 0 && $ARGV[0] =~ m/^direct$/  ? shift @ARGV : 0;
     push @PV_nomin, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : 0;
     push @PV_limit, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : 0;
 }
@@ -303,6 +307,7 @@ if ($test) {
     $inverter_eff  =  0.8 unless defined $inverter_eff;
     # $consumption = $test_load/1000 * TEST_LOAD_LEN unless defined $consumption;
     push @PV_files, "test PV data" if $#PV_files < 0;
+    push @PV_direct, 0             if $#PV_nomin < 0;
     push @PV_nomin, $pv_nomin      if $#PV_nomin < 0;
     push @PV_limit, $pv_limit      if $#PV_limit < 0;
     $charge_eff    =  0.9 if defined $capacity && !defined $charge_eff;
@@ -713,6 +718,7 @@ $load_max *= $load_scale;
 my $profile_txt = $en ? "load profile file"     : "Lastprofil-Datei";
 my $pv_data_txt = $en ? "PV data file"          : "PV-Daten-Datei";
 my $plural_txt  = $en ? "(s)"                   : "(en)";
+my $direct_txt  = $en ? "direct"                : "direkt";
 my $limit_txt   = $en ? "inverter input limit"  : "WR-Eingangs-Begrenzung";
 my $none_txt    = $en ? "(0 = none)"            : "(0 = keine)";
 my $slope_txt   = $en ? "slope"                 : "Neigungswinkel";
@@ -784,10 +790,11 @@ my $nominal_power_sum = 0;
 my @PV_gross;
 my @PV_gross_across; # sum over years, only where selected
 my @PV_net;
+my @PV_net_direct;
 my @PV_net_across; # sum over years, only where selected
 my ($start_year, $years);
 my $garbled_hours = 0;
-sub get_power { my ($file, $nominal_power, $limit) = @_;
+sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
     $limit *= $inverter_eff; # limit at inverter input converted to net output
     open(my $IN, '<', $file) or die "Could not open PV data file $file: $!\n"
         unless $test;
@@ -918,7 +925,8 @@ sub get_power { my ($file, $nominal_power, $limit) = @_;
         $net_power = $gross_power * $net_rate;
         $net_power = $limit if $limit != 0 && $net_power > $limit;
         # TODO adapt loss calcuation (so far only on curb) accordingly
-        $PV_net[$year][$month][$day][$hour] += $net_power;
+        $PV_net       [$year][$month][$day][$hour] += $net_power;
+        $PV_net_direct[$year][$month][$day][$hour] += $direct ? $net_power : 0;
 
         $hours++;
         last if $test && $hours == TEST_END;
@@ -951,7 +959,8 @@ sub get_power { my ($file, $nominal_power, $limit) = @_;
 my $total_limit = 0;
 for (my $i = 0; $i <= $#PV_files; $i++) {
     $total_limit += $PV_limit[$i];
-    $PV_nomin[$i] = get_power($PV_files[$i], $PV_nomin[$i], $PV_limit[$i]);
+    $PV_nomin[$i] = ($PV_direct[$i] ? "$direct_txt:" : "").
+        get_power($PV_files[$i], $PV_nomin[$i], $PV_limit[$i], $PV_direct[$i]);
 }
 my $PV_nomin = join("+", @PV_nomin);
 my $PV_limit = join("+", @PV_limit);
@@ -1022,13 +1031,14 @@ my $storage_loss  = 0 if defined $capacity;
 my $coupling_loss = 0 if defined $capacity;
 
 sub simulate_item {
-    my ($year_str, $month, $day, $hour, $gross_power, $pvnet_power,
+    my ($year_str, $month, $day, $hour,
+        $gross_power, $pvnet_power, $pvnet_direct,
         $item, $items, $trace, $PV_loss, $PV_loss_capa) = @_;
+    my $load = $load_item[$month][$day][$hour][$item];
     # $gross_power is used only with DC-coupled charging
-    # $pvnet_power is the main input for simulation
+    # $pvnet_{power,direct} and $load are the main input for simulation
     # $PV_loss is upper limit for PV net usage loss computation on $curb
 
-    my $load = $load_item[$month][$day][$hour][$item];
     die "Internal error: load_item[$month][$day][$hour][$item] is undefined"
         unless defined $load;
     if ($trace) {
@@ -1037,27 +1047,29 @@ sub simulate_item {
                $hour, $load, $pvnet_power + .5);
     }
     # $needed += $load;
-    # load will be reduced by constant $bypass or $bypass_spill
+    # load will be reduced by $bypass or $bypass_spill or $pvnet_direct
 
-    # $pv_used locally accumulates PV own consumption
-    # feed by constant bypass or just as much as needed (optimal charge)
-    my $pv_used = defined $bypass ? $bypass : $load; # preliminary
     my $pv_use_loss = 0 if $curb;
     my $grid_feed_in = 0; # locally accumulates grid feed
     my ($charge_delta, $dischg_delta, $coupling_loss) = (0, 0, 0)
         if defined $capacity;
 
+    my $pv_taken = # value set here is preliminary, may be adapted below
+        defined $bypass ? $bypass + $pvnet_direct # constant and direct bypass
+        : ($load >= $pvnet_direct ? $load # only as needed (optimal charge)
+           : $pvnet_direct); # direct feed from PV array exceeding load
     my $power_missing = 0; # potential usage losses due to curb
-    my $excess_power = $pvnet_power - $pv_used;
+    my $excess_power = $pvnet_power - $pv_taken;
     if ($excess_power < 0) {
         $power_missing = -$excess_power if $curb;
-        $pv_used = $pvnet_power;
-        # == min($pvnet_power, defined $bypass ? $bypass : $load)
+        $pv_taken = $pvnet_power;
     }
 
+    # $pv_used locally accumulates PV own consumption
+    my $pv_used = $pv_taken; # value here is preliminary, may be adapted below
     my $unused_bypass = 0;
-    if (defined $bypass) { # implies defined $capacity
-        $unused_bypass = $pv_used - $load;
+    if (defined $bypass || $load < $pvnet_direct) {
+        $unused_bypass = $pv_taken - $load;
         if ($unused_bypass > 0) {
             $pv_used = $load;
             $grid_feed_in = $unused_bypass;
@@ -1065,8 +1077,16 @@ sub simulate_item {
         } else {
             $unused_bypass = 0;
         }
-        printf("bypass grid=%4d,used=%4d ",
-               $unused_bypass + .5, $pv_used + .5) if $trace;
+    }
+    if ($trace) {
+        if (defined $bypass) {
+            printf("bypass%s used=%4d,unused=%4d ",
+                   $pvnet_direct > 0 ? "+direct" : "",
+                   $pv_used + .5, $unused_bypass + .5)
+        } elsif ($pvnet_direct > 0) {
+            printf("direct used=%4d,unused=%4d ",
+                   $pvnet_direct - $unused_bypass + .5, $unused_bypass + .5)
+        }
     }
     my $power_needed = $load - $pv_used;
 
@@ -1260,7 +1280,7 @@ sub simulate_item {
 
 sub simulate_hour {
     my ($year_str, $year, $month, $day, $hour,
-        $gross_power, $pvnet_power) = @_;
+        $gross_power, $pvnet_power, $pvnet_direct) = @_;
 
     my ($hpv_used, $hgrid_feed) = (0, 0);
     my $hpv_use_loss = 0 if $curb;
@@ -1293,9 +1313,10 @@ sub simulate_hour {
     $PV_net_sum += $pvnet_power;
 
     # factor out $load_scale for optimizing the inner loop
-    $gross_power /= $load_scale_never_0 if $DC_coupled;
-    $pvnet_power /= $load_scale_never_0;
-    $PV_loss     /= $load_scale_never_0 if $PV_loss != 0; # implies $curb
+    $gross_power  /= $load_scale_never_0 if $DC_coupled;
+    $pvnet_power  /= $load_scale_never_0;
+    $pvnet_direct /= $load_scale_never_0;
+    $PV_loss      /= $load_scale_never_0 if $PV_loss != 0; # implies $curb
 
     my $PV_loss_capa;
     if (defined $capacity && $PV_loss != 0) {
@@ -1325,7 +1346,8 @@ sub simulate_hour {
     # my $feed_sum = 0 if defined $max_feed_scaled_by_eff;
     for (my $item = 0; $item < $items; $item++) {
         my ($pvu, $pul, $gfi, $chg, $dis, $cpl) =
-        simulate_item($year_str, $month, $day, $hour, $gross_power, $pvnet_power,
+        simulate_item($year_str, $month, $day, $hour,
+                      $gross_power, $pvnet_power, $pvnet_direct,
                       $item, $items, $trace, $PV_loss, $PV_loss_capa);
         ($hpv_used += $pvu, $hgrid_feed += $gfi);
         $hpv_use_loss += $pul if $curb;
@@ -1434,13 +1456,13 @@ sub simulate()
 
         # restrict simulation to month, day, and hour given by the -only option
         if (selected($month, $day, $hour)) {
-            my $gross_power = $PV_gross[$year][$month][$day][$hour];
-            my $pvnet_power = $PV_net  [$year][$month][$day][$hour];
+            my $gross_power  = $PV_gross       [$year][$month][$day][$hour];
+            my $pvnet_power  = $PV_net         [$year][$month][$day][$hour];
+            my $pvnet_direct = $PV_net_direct  [$year][$month][$day][$hour];
 
             if (!defined $gross_power) {
                 if ($hour == 0 && $garbled_hours) { # likely just garbled hour
-                    $gross_power = 0;
-                    $pvnet_power = 0;
+                    $gross_power = $pvnet_power = $pvnet_direct = 0;
                 } else {
                     $en = 1;
                     die "No power data ".
@@ -1449,7 +1471,7 @@ sub simulate()
             }
 
             simulate_hour($year_str, $year, $month, $day, $hour,
-                          $gross_power, $pvnet_power);
+                          $gross_power, $pvnet_power, $pvnet_direct);
         }
 
         $hour = 0 if ++$hour == 24;

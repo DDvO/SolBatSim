@@ -717,18 +717,19 @@ my $orig_load_sum = $load_sum;
 my $load_scale = defined $consumption && $load_sum != 0
     ? 1000 * $consumption / $load_sum : 1;
 my $load_scale_never_0 = never_0($load_scale);
+sub rls { return round($_[0] * $load_scale); };
 
 my $hours_a_day = defined $sel_hour ? $sel_hour2 - $sel_hour + 1 : 24;
-my $sn = $sel_hours ? $load_scale / $sel_hours * $hours_a_day : 0;
+my $sn = $sel_hours ? 1 / $sel_hours * $hours_a_day : 0;
 for (my $hour = 0; $hour < 24; $hour++) {
-    $load_per_hour[$hour] = round($load_by_hour [$hour] * $sn);
+    $load_per_hour[$hour] = rls($load_by_hour [$hour] * $sn);
     $load_min_hour[$hour] = !defined $load_min_hour[$hour] ? 0
-                          : round($load_min_hour[$hour] * $load_scale);
-    $load_max_hour[$hour] = round($load_max_hour[$hour] * $load_scale);
+                          : rls($load_min_hour[$hour]);
+    $load_max_hour[$hour] = rls($load_max_hour[$hour]);
 }
-$load_const = round($load_const * $load_scale) if defined $load_const;
-$load_sum *= $load_scale;
-$load_max *= $load_scale;
+$load_const = rls($load_const) if defined $load_const;
+$load_sum = rls($load_sum);
+$load_max = rls($load_max);
 
 my $profile_txt = $en ? "load profile file"     : "Lastprofil-Datei";
 my $pv_data_txt = $en ? "PV data file"          : "PV-Daten-Datei";
@@ -784,11 +785,11 @@ if ($verbose) {
     print "$p_txt = ".sprintf("%4d", $items_per_hour)."\n";
     print "$t_txt =".kWh($orig_load_sum)."\n";
     print "$consumpt_txt $de2                =".kWh($load_sum)." $yearly_txt\n";
-    print "$consumpt_txt $de2                =".kWh($sel_load_sum).
+    print "$consumpt_txt $de2                =".kWh(rls($sel_load_sum)).
         " $load_only\n" if $only;
 }
 $night_sum /= (NIGHT_END - NIGHT_START) if $hours_a_day == 24;
-print "$b_txt =".W($night_sum * $sn)."\n";
+print "$b_txt =".W(rls($night_sum * $sn))."\n";
 print          "$M_txt $en3                =".W($load_max)." $load_max_time\n";
 print_arr_day( "$D_txt $en1= ", \@load_dist   ) if defined $load_dist;
 print_arr_day("$d_txt $de1 = ", \@load_factors) if defined $load_factors;
@@ -1087,8 +1088,8 @@ sub simulate_charge {
         $charge_input = $excess_power;
         # will become min($excess_power, $limited_fill);
         my $surplus = $excess_power - $limited_fill;
-        printf("[excess=%4d,tofill=%6d,surplus=%4d] ", $excess_power + .5,
-               $need_for_fill + .5, max($surplus, 0) + .5) if $trace;
+        printf("[excess=%4d,tofill=%6d,surplus=%4d] ", rls($excess_power),
+               rls($need_for_fill), rls(max($surplus, 0))) if $trace;
         if ($surplus > 0) {
             $chg_limited =  $limited_fill < $need_for_fill ? "(rate limit) "
                 : "" if $trace; # not showing "(SoC limit) "
@@ -1102,7 +1103,7 @@ sub simulate_charge {
 
             if (!defined $bypass) { # i.e., on optimal charge
                 $grid_feed_in += $surplus_net;
-                printf("surplus feed=%4d ", $surplus_net + .5)
+                printf("surplus feed=%4d ", rls($surplus_net))
                     if $trace;
             } elsif ($bypass_spill) {
                 my $remaining_surplus = $surplus_net -$power_needed;
@@ -1114,12 +1115,12 @@ sub simulate_charge {
                 $pv_used += $used_surplus;
                 $power_needed -= $used_surplus;
                 $grid_feed_in += $remaining_surplus;
-                printf("surplus feed=%4d,used=%4d ", $remaining_surplus +.5,
-                       $used_surplus + .5) if $trace;
+                printf("surplus feed=%4d,used=%4d ", rls($remaining_surplus),
+                       rls($used_surplus)) if $trace;
             } else {
                 # defined $bypass && !$bypass_spill && $DC_coupled
                 $spill_loss += $surplus;
-                printf("spill=%4d ", $surplus +.5) if $trace;
+                printf("spill=%4d ", rls($surplus)) if $trace;
             }
         } elsif ($trace) {
             printf($trace_blank_no_surplus);
@@ -1147,9 +1148,9 @@ sub simulate_charge {
     my $trace_charge = $trace &&
         ($excess_power > 0 || $soc > $soc_min);
     printf("chrg loss=%4d dischrg needed=%4d [SoC %6d + %4d %s",
-           $charge_input - $charge_delta + .5,
-           $power_needed + .5, $soc - $charge_delta + .5,
-           $charge_delta + .5, $chg_limited) if $trace_charge;
+           rls($charge_input - $charge_delta),
+           rls($power_needed), rls($soc - $charge_delta),
+           rls($charge_delta), $chg_limited) if $trace_charge;
 
     return ($charge_delta, $pv_used, $grid_feed_in, $maybe_loss, $power_needed,
             $trace_charge);
@@ -1169,7 +1170,7 @@ sub simulate_item {
     if ($trace) {
         printf("%s-%02d-%02d ", $year_str, $month, $day) unless $test;
         printf("%02d".minute_str($item, $items)." load=%4d PV net=%4d ",
-               $hour, $load, $pvnet_power + .5);
+               $hour, rls($load), rls($pvnet_power));
     }
     # $needed += $load;
     # load will be reduced by $bypass or $bypass_spill or $pvnet_direct
@@ -1207,10 +1208,10 @@ sub simulate_item {
         if (defined $bypass) {
             printf("bypass%s used=%4d,unused=%4d ",
                    $pvnet_direct > 0 ? "+direct" : "",
-                   $pv_used + .5, $unused_bypass + .5)
+                   rls($pv_used), rls($unused_bypass))
         } elsif ($pvnet_direct > 0) {
             printf("direct used=%4d,unused=%4d ",
-                   $pvnet_direct - $unused_bypass + .5, $unused_bypass + .5)
+                   rls($pvnet_direct - $unused_bypass), rls($unused_bypass))
         }
     }
     my $power_needed = $load - $pv_used;
@@ -1261,8 +1262,8 @@ sub simulate_item {
                 $dis_limited .= " (rate limit)" if $trace;
                 $discharge = $max_dispower;
             }
-            printf("- %4d%s - lost:%4d", $discharge * $storage_eff + .5,
-                   $dis_limited, $discharge * (1 - $storage_eff) + .5)
+            printf("- %4d%s - lost:%4d", rls($discharge * $storage_eff),
+                   $dis_limited, rls($discharge * (1 - $storage_eff)))
                 if $trace;
             if ($discharge != 0) {
                 $soc -= $discharge; # includes storage loss
@@ -1289,9 +1290,9 @@ sub simulate_item {
         } else {
             print "                   " if $trace;
         }
-        # printf("= %4d] ", $soc + .5) if $trace_charge;
+        # printf("= %4d] ", rls($soc)) if $trace_charge;
         printf("] ") if $trace_charge;
-        printf("dischg loss=%4d ", $dischg_loss + .5) if $trace_charge;
+        printf("dischg loss=%4d ", rls($dischg_loss)) if $trace_charge;
         if ($max) {
             $charge_by_item[$month][$day][$hour][$item] += $charge_delta;
             $dischg_by_item[$month][$day][$hour][$item] += $dischg_delta;
@@ -1303,8 +1304,8 @@ sub simulate_item {
     }
 
     if ($trace) {
-        printf("used=%4d feed=%4d", $pv_used + .5, $grid_feed_in + .5);
-        printf(" missing=%4d", $maybe_loss + .5) if $PV_loss != 0;
+        printf("used=%4d feed=%4d", rls($pv_used), rls($grid_feed_in));
+        printf(" missing=%4d", rls($maybe_loss)) if $PV_loss != 0;
     }
     if ($max) {
         $PV_used_by_item  [$month][$day][$hour][$item] += $pv_used;
@@ -1316,7 +1317,7 @@ sub simulate_item {
         $pv_use_loss = min($PV_loss_curr, $maybe_loss);
         $PV_use_loss_by_item[$month][$day][$hour][$item]+= $pv_use_loss if $max;
         $PV_use_loss_hours++; # will be normalized by $sel_items
-        printf(" curb loss=%4d", $pv_use_loss + .5) if $trace;
+        printf(" curb loss=%4d", rls($pv_use_loss)) if $trace;
     } elsif ($PV_loss != 0 && $max) {
         $PV_use_loss_by_item[$month][$day][$hour][$item] += 0;
     }
@@ -1551,9 +1552,9 @@ sub simulate()
     $PV_use_loss_sum *= $load_scale / $years if $curb;
     $PV_used_sum *= $load_scale / $years;
     $grid_feed_sum *= $load_scale / $years;
-    # $sum_needed *= $load_scale;
+    # $sum_needed = rls($sum_needed);
     # die "Internal error: load sum = $load_sum vs. needed = $sum_needed"
-    #     if round($load_sum) != round($sum_needed);
+    #     if $load_sum != $sum_needed;
 
     if (defined $capacity) {
         # undo: factor out $load_scale for optimizing the inner loop
@@ -1579,15 +1580,15 @@ simulate();
 my $pny = $sel_hours / $hours_a_day * $years;
 my $sny = $sn / $years;
 for (my $hour = 0; $hour < 24; $hour++) {
-    $PV_per_hour[$hour] = round($PV_by_hour[$hour] / never_0($pny));
-    $PV_max_hour[$hour] = round($PV_max_hour[$hour]);
-    $grid_feed_per_hour[$hour] = round($grid_feed_per_hour[$hour] * $sny);
-    $grid_feed_max_hour[$hour] = round($grid_feed_max_hour[$hour] *$load_scale);
+    $PV_per_hour        [$hour] = round( $PV_by_hour[$hour] / never_0($pny));
+    $PV_max_hour        [$hour] = round($PV_max_hour[$hour]);
+    $grid_feed_per_hour [$hour] = rls($grid_feed_per_hour[$hour] * $sny);
+    $grid_feed_max_hour [$hour] = rls($grid_feed_max_hour[$hour]);
     if (defined $capacity) {
-        $charge_per_hour[$hour] = round($charge_per_hour[$hour] * $sny);
-        $dischg_per_hour[$hour] = round($dischg_per_hour[$hour] * $sny);
-        $charge_max_hour[$hour] = round($charge_max_hour[$hour] * $sny);
-        $dischg_max_hour[$hour] = round($dischg_max_hour[$hour] * $sny);
+        $charge_per_hour[$hour] = rls(   $charge_per_hour[$hour] * $sny);
+        $dischg_per_hour[$hour] = rls(   $dischg_per_hour[$hour] * $sny);
+        $charge_max_hour[$hour] = rls(   $charge_max_hour[$hour] * $sny);
+        $dischg_max_hour[$hour] = rls(   $dischg_max_hour[$hour] * $sny);
     }
 }
 
@@ -1613,7 +1614,8 @@ my $of_yield         = $en ? "of $PV_txt"     :"des $PV_txt"."s (Nutzungsgrad)";
 my $of_consumption   = $en ? "of consumption" : "des Verbrauchs (Autarkiegrad)";
 my $PV_loss_txt      = $en ? "PV yield net loss"    : "PV-Netto-Ertragsverlust";
 my $load_const_txt   = $en ? ($load_min ? "minimal"   : "constant")." load"
-                           : ($load_min ? "Minimale " : "Konstante")." Last";
+                           : ($load_min ? "Minimale" : "Konstante")." Last".
+                             ($load_min ? " " : "");
 my @weekdays         = $en ? ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
                            : ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So");
 my $dx = $load_days - 1;
@@ -1736,7 +1738,7 @@ sub save_statistics {
     print $OU "$pv_data_txt$plural_txt".($tmy ? " $during_txt $TMY" : "")."$only_during\n";
     print $OU "".round_1000($sel_load_sum).",$load_profile,";
     print $OU "$load_const," if defined $load_const;
-    print $OU round($load_max).",".join(",", @PV_files)."\n";
+    print $OU "$load_max,".join(",", @PV_files)."\n";
 
     print $OU "$nominal_txt in Wp,$limit_txt in W $none_txt,"
         ."$gross_max_txt in W $PV_gross_max_time,"

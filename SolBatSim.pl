@@ -1043,9 +1043,9 @@ my $soc_min = $capacity * (1 - $max_dod) if defined $capacity;
 my $soc_max_reached = $soc_min           if defined $capacity;
 my $soc_max_time = $no_time_txt;
 my $max_chgpower = $max_chgrate * $capacity / $charge_eff_never_0
-    if defined $capacity;
+    / $load_scale_never_0 if defined $capacity;
 my $max_dispower = $max_disrate * $capacity / $storage_eff_never_0
-    if defined $capacity;
+    / $load_scale_never_0 if defined $capacity;
 my @soc               if defined $capacity; # state of charge on avg over years
 my @soc_by_item       if defined $capacity;
 my $soc               if defined $capacity; # state of charge of the battery
@@ -1718,7 +1718,7 @@ if (defined $capacity) { # also for future loss when discharging the rest:
     }
     $storage_loss = $charge_sum * (1 - $storage_eff); # including future dischg
     $cycles = round($charge_sum / ($soc_max - $soc_min)) if $capacity != 0;
-    $cycles-- if $soc > $soc_min;
+    $cycles-- if $cycles > 0 && $soc > $soc_min;
     if ($DC_coupled) {
         $DC_feed_loss =
             ($PV_used_sum + $grid_feed_sum - $dischg_sum * $inverter2_eff) *

@@ -1105,6 +1105,7 @@ sub simulate_item {
         my $trace_blank_no_surplus = " " x
             (defined $bypass ? ($bypass_spill ? 28 : 11): 18)
             if $trace;
+        my $chg_limited = "" if $trace;
         if ($excess_power > 0) {
             # $excess_power is the power available for charging
 
@@ -1119,8 +1120,8 @@ sub simulate_item {
             printf("[excess=%4d,tofill=%4d,surplus=%4d] ", $excess_power + .5,
                    $need_for_fill + .5, max($surplus, 0) + .5) if $trace;
             if ($surplus > 0) {
-                printf "rate limit, " if $trace
-                    && $limited_fill < $need_for_fill; # else SoC limit
+                $chg_limited =  $limited_fill < $need_for_fill ? "(rate limit) "
+                    : "" if $trace; # not showing "(SoC limit) "
                 $charge_input = $limited_fill;
                 # TODO properly handle simultaneous charge and discharge
                 # which is relevant with non-optimal charging (-pass)
@@ -1174,10 +1175,10 @@ sub simulate_item {
         }
         my $trace_charge = $trace &&
             ($excess_power > 0 || $soc > $soc_min);
-        printf("chrg loss=%4d dischrg needed=%4d [SoC %4d + %4d ",
+        printf("chrg loss=%4d dischrg needed=%4d [SoC %4d + %4d %s",
                $charge_input - $charge_delta + .5,
                $power_needed + .5, $soc - $charge_delta + .5,
-               $charge_delta + .5) if $trace_charge;
+               $charge_delta + .5, $chg_limited) if $trace_charge;
 
         ## add reduced discharging due to curb to potential usage losses
         ## - well, this would be just approximate:
@@ -1203,18 +1204,18 @@ sub simulate_item {
                         if $discharge > $max_feed_scaled_by_eff;
                 }
             }
-            my $limited = "";
+            my $dis_limited = "" if $trace;
             my $charge_available = $soc - $soc_min;
             if ($discharge > $charge_available) {
-                $limited .= ", DoD limit";
+                # $dis_limited .= " (DoD limit)" if $trace;
                 $discharge = $charge_available;
             }
             if ($discharge > $max_dispower) {
-                $limited .= ", rate limit";
+                $dis_limited .= " (rate limit)" if $trace;
                 $discharge = $max_dispower;
             }
             printf("- %4d%s - lost:%4d", $discharge * $storage_eff + .5,
-                   $limited, $discharge * (1 - $storage_eff) + .5)
+                   $dis_limited, $discharge * (1 - $storage_eff) + .5)
                 if $trace;
             if ($discharge != 0) {
                 $soc -= $discharge; # includes storage loss

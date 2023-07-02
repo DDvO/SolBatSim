@@ -72,7 +72,7 @@
 #   [-pass [spill] <constant storage bypass in W in addition to 'direct',
 #                   with 'spill' or AC coupling also when storage is full>]
 #   [-feed (max <limited feed-in from storage in W according to load>
-#           | [<von Uhrzeit, sonst 0 Uhr>..<bis Uhrzeit, sonst 24 Uhr>]
+#           | [<from hour, default 0>..<to hour, default 24>]
 #             <constant feed-in from storage in W> )]
 #   [-max_charge <SoC in %, default 90> [<max charge rate, default 1 C>]]
 #   [-max_discharge <DoD in %, default 90> [<max rate, default 1 C>]]
@@ -743,6 +743,9 @@ my $yearly_txt  = $en ? "over a year"           : "über ein Jahr";
 my $values_txt  = $en ? "values"                : "Werte";
 my $only_txt    = $en ? "only"                  : "nur";
 my $during_txt  = $en ? "during"                : "während";
+my $from_txt    = $en ? "from"                  : "von";
+my $to_txt      = $en ? "to"                    : "bis";
+my $hrs_txt     = $en ? "hrs"                   : "Uhr";
 my $hour_txt    = $en ? "hour"                  : "Stunde";
 my $TMY         = "TMY (2008..2020)";
 my $simul_year  = $en ? "simulated PV year"     : "Simuliertes PV-Jahr";
@@ -762,7 +765,7 @@ my $V_txt = $en ? "PV portion"                  : "PV-Anteil";
 my $per3  = $en ? "per 3 hours"                 : "pro 3 Stunden";
 my $per_m = $en ? "per month"                   : "pro Monat";
 my $W_txt = $en ? "portion per weekday (Mo-Su)" :"Anteil pro Wochentag (Mo-So)";
-my $b_txt = $en ? "basic load                 " : "Grundlast                  ";
+my $b_txt = $en ? "basic load on average"       : "Grundlast im Durchschnitt";
 my $M_txt = $en ? "max load"                    : "Maximallast";
 my $en1 = $en ? " "   : "";
 my $en2 = $en ? "  "  : "";
@@ -775,9 +778,14 @@ my $s10   = "          ";
 my $s13   = "             ";
 my $lhs_spaces = " " x length("$W_txt$en1");
 
-my $only_during = $only ?" $only_txt $during_txt $only" : "";
-$only =~ s/^[^-]*-// if $only; # chop year restriction
-my $load_only = $only ? "$only_txt $during_txt *-$only" : "$yearly_txt";
+sub from_to_hours_str {
+    my ($from, $to) = @_;
+    return $from == 0 && $to == 24 ? ""
+        : " $from_txt ".int($from)." $to_txt ".int($to)." $hrs_txt";
+}
+my $only_during = $only ? " $only_txt $during_txt $only" : "";
+# $only =~ s/^[^-]*-// if $only; # chop year restriction
+my $timeframe = $only ? $only_during : " $yearly_txt";
 
 print "load_scale                  = $load_scale\n" if $debug && !$test;
 print "$profile_txt$de1$s10 : $load_profile\n" unless $test;
@@ -786,10 +794,12 @@ if ($verbose) {
     print "$t_txt =".kWh($orig_load_sum)."\n";
     print "$consumpt_txt $de2                =".kWh($load_sum)." $yearly_txt\n";
     print "$consumpt_txt $de2                =".kWh(rls($sel_load_sum)).
-        " $load_only\n" if $only;
+        "$timeframe\n" if $only;
 }
-$night_sum /= (NIGHT_END - NIGHT_START) if $hours_a_day == 24;
-print "$b_txt =".W(rls($night_sum * $sn))."\n";
+my $basic_load = $night_sum * $sn;
+$basic_load /= (NIGHT_END - NIGHT_START) if $hours_a_day == 24;
+print "$b_txt $en2 $en2 =".W(rls($basic_load)).
+    from_to_hours_str(NIGHT_START, NIGHT_END)."\n";
 print          "$M_txt $en3                =".W($load_max)." $load_max_time\n";
 print_arr_day( "$D_txt $en1= ", \@load_dist   ) if defined $load_dist;
 print_arr_day("$d_txt $de1 = ", \@load_factors) if defined $load_factors;
@@ -1603,7 +1613,7 @@ my $net_max_txt      = $en ? "max net PV power"     : "Max. PV-Nettoleistung";
 my $curb_txt         = $en ? "inverter output curb" : "WR-Ausgangs-Drosselung";
 my $pvsys_eff_txt    = $en ? "PV system efficiency" : "PV-System-Wirkungsgrad";
 my $own_txt          = $en ? "PV own use"           : "PV-Eigenverbrauch";
-my $own_ratio_txt    = $own_txt . ($en ? " ratio"  : "santeil");
+my $own_ratio_txt    = $own_txt .  ($en ? " ratio"  : "santeil");
 my $own_storage_txt  = $en ?"PV own use via storage":"PV-Nutzung über Speicher";
 my $load_cover_txt   = $en ? "use coverage ratio"   : "Eigendeckungsanteil";
 my $PV_gross_txt     = $en ? "PV gross yield"       : "PV-Bruttoertrag";
@@ -1613,19 +1623,17 @@ my $PV_txt   = $DC_coupled ? $PV_DC_txt             : $PV_net_txt;
 my $of_yield         = $en ? "of $PV_txt"     :"des $PV_txt"."s (Nutzungsgrad)";
 my $of_consumption   = $en ? "of consumption" : "des Verbrauchs (Autarkiegrad)";
 my $PV_loss_txt      = $en ? "PV yield net loss"    : "PV-Netto-Ertragsverlust";
-my $load_const_txt   = $en ? ($load_min ? "minimal"   : "constant")." load"
-                           : ($load_min ? "Minimale" : "Konstante")." Last".
+my $load_const_txt   = $en ? ($load_min ? "minimal" : "constant")." load"
+                           : ($load_min ? "Minimale": "Konstante")." Last".
                              ($load_min ? " " : "");
 my @weekdays         = $en ? ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
                            : ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So");
 my $dx = $load_days - 1;
 my $load_during_txt  =($load_days == 7 ? "" :
-                       ($en ? ($load_days == 1 ? "an Mondays"  : "on Mon..$weekdays[$dx]")
-                            : ($load_days == 1 ? "an Montagen" : "an Mo..$weekdays[$dx]"))).
-                      (($load_from == 0 && $load_to == 24) ? "" :
-                       ($en ? " from $load_from to $load_to h"
-                           : " von $load_from bis $load_to Uhr"))
-                      if defined $load_const;
+           ($en ? " on Mon".($load_days == 1 ? "days"   : "..$weekdays[$dx]")
+                : " an Mo" .($load_days == 1 ? "ntagen" : "..$weekdays[$dx]"))).
+                       from_to_hours_str($load_from, $load_to)
+                       if defined $load_const;
 my $usage_loss_txt   = $en ? "$own_txt net loss"    :  $own_txt."sverlust";
 my $net_appr         = $en ? "net"                  : "netto";
 $net_appr           .=($en ?" - just approximately -":" - nur näherungsweise -")
@@ -1661,9 +1669,7 @@ my $feed_txt        = ($const_feed
                     ? ($en ? "constant "            : "Konstant")
                     : ($en ?  "maximal "            : "Maximal"))
                      .($en ? "feed-in"              : "einspeisung");
-my $feed_during_txt  =!$const_feed || ($feed_from == 0 && $feed_to == 24) ? "" :
-                       $en ? " from $feed_from to $feed_to h"
-                           : " von $feed_from bis $feed_to Uhr";
+my $feed_during_txt  =!$const_feed || from_to_hours_str($feed_from, $feed_to);
 my $max_disrate_txt  = $en ? "max discharge rate"   : "max. Entladerate";
 my $ceff_txt         = $en ? "charging efficiency"  : "Lade-Wirkungsgrad";
 my $seff_txt         = $en ? "storage efficiency"   : "Speicher-Wirkungsgrad";
@@ -1732,11 +1738,13 @@ sub save_statistics {
 
     my $nominal_sum = $#PV_nomin == 0 ? $PV_nomin[0] : "$PV_nomin";
     my $limits_sum  = $#PV_limit == 0 ? $PV_limit[0] : "$PV_limit";
-    print $OU "$consumpt_txt $load_only in kWh,$profile_txt,";
-    print $OU "$load_const_txt in W $load_during_txt," if defined $load_const;
+    print $OU "$consumpt_txt$timeframe in kWh,$profile_txt,";
+    print $OU "$b_txt in W".from_to_hours_str(NIGHT_START, NIGHT_END).",";
+    print $OU "$load_const_txt in W$load_during_txt," if defined $load_const;
     print $OU "$M_txt in W $load_max_time,";
-    print $OU "$pv_data_txt$plural_txt".($tmy ? " $during_txt $TMY" : "")."$only_during\n";
-    print $OU "".round_1000($sel_load_sum).",$load_profile,";
+    print $OU "$pv_data_txt$plural_txt".($tmy ? " $during_txt $TMY" : "").
+        "$only_during\n";
+    print $OU round_1000($sel_load_sum).",$load_profile,".rls($basic_load).",";
     print $OU "$load_const," if defined $load_const;
     print $OU "$load_max,".join(",", @PV_files)."\n";
 
@@ -1768,7 +1776,7 @@ sub save_statistics {
             .(percent($storage_eff) / 100)."\n";
         print $OU "$spill_loss_txt in kWh,"
             ."$charging_loss_txt in kWh,$storage_loss_txt in kWh,"
-            ."$coupl_loss_txt $due_to $ieff2_txt in kWh,"
+            ."$coupl_loss_txt in kWh,"
             ."$own_storage_txt in kWh,$max_soc_txt in Wh $PV_net_max_time,"
             ."$stored_txt in kWh,$cycles_txt $of_eff_cap_txt\n";
         print $OU "".round_1000($spill_loss * $inverter_eff).","
@@ -2005,9 +2013,9 @@ print "$PV_net_txt $en2             =" .kWh($PV_net_sum).
 #    percent($PV_net_sum ? $PV_net_bright_sum / $PV_net_sum : 0);
 
 print "\n";
-print "$consumpt_txt $de2                =".kWh($sel_load_sum)." $load_only\n";
+print "$consumpt_txt $de2                =".kWh($sel_load_sum)."$timeframe\n";
 print "$load_const_txt $en1 ".($load_min ? "$en1" : "")."            ="
-    .W($load_const)." $load_during_txt\n" if defined $load_const;
+    .W($load_const)."$load_during_txt\n" if defined $load_const;
 if (defined $capacity) {
     print "\n".
         "$capacity_txt $en1          =" .W($capacity)."h $with"
@@ -2038,7 +2046,7 @@ if (defined $capacity) {
         print_arr_day(    "$C_txt"." = ", \@dischg_per_hour);
         print_arr_day("$C_max_txt"." = ", \@dischg_max_hour);
     }
-    printf "$max_soc_txt               =%5d Wh $soc_max_time\n",
+    printf "$max_soc_txt $en3$en3              =%5d Wh $soc_max_time\n",
         round($soc_max_reached);
     print "$stored_txt $en2$en2        =" .kWh($charge_sum)." $after $charging_loss_txt\n";
     printf "$cycles_txt $de1                =  %3d $of_eff_cap_txt\n", round($cycles);

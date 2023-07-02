@@ -112,6 +112,11 @@
 use strict;
 use warnings;
 
+# deliberately not using any extra packages like Math
+sub min { return !defined $_[0] || $_[0] > $_[1] ? $_[1] : $_[0]; }
+sub max { return !defined $_[0] || $_[0] < $_[1] ? $_[1] : $_[0]; }
+sub round { return int(($_[0] < 0 ? -.5 : .5) + $_[0]); }
+
 my $test         = 0;   # unless 0, number of test load points per hour
 my $debug        = 0;   # turn on debug output, implied by $test != 0
 die "Missing command line arguments" if $#ARGV < 0;
@@ -181,7 +186,7 @@ sub eff_arg {
     my $opt = $ARGV[0];
     my $eff = num_arg();
     die "Percentage argument $eff for $opt option is out of range 0..100"
-        unless 0 <= $eff && $eff < 100.5;
+        unless 0 <= round($eff) && round($eff) <= 100;
     return $eff / 100;
 }
 sub str_arg {
@@ -406,10 +411,6 @@ my $inverter2_eff_never_0 = never_0($inverter2_eff) if defined $storage_eff;
 my $max_feed_scaled_by_eff = $max_feed /
     ($storage_eff_never_0 * $inverter2_eff_never_0) if defined $max_feed;
 
-# deliberately not using any extra packages like Math
-sub min { return !defined $_[0] || $_[0] > $_[1] ? $_[1] : $_[0]; }
-sub max { return !defined $_[0] || $_[0] < $_[1] ? $_[1] : $_[0]; }
-sub round { return int(($_[0] < 0 ? -.5 : .5) + $_[0]); }
 sub check_consistency { my ($actual, $expected, $name, $file) = @_;
     return if $test;
     die "Got $actual $name rather than $expected from $file"
@@ -444,9 +445,10 @@ sub kWh     {
 sub W       { return sprintf("%5d W", round(shift)); }
 sub percent {
     my $val = shift() * 100;
+    my $res = round($val);
     die "Percentage value $val is out of range 0..100"
-        unless 0 <= $val && $val < 100.5;
-    return round($val);
+        unless 0 <= $res && $res <= 100;
+    return $res;
 }
 sub round_percent { return percent(shift) / 100; }
 sub print_arr { my ($msg, $arr_ref, $sum, $start, $end, $inc) = @_;
@@ -2037,7 +2039,7 @@ if (defined $capacity) {
     printf "$max_soc_txt               =%5d Wh $soc_max_time\n",
         round($soc_max_reached);
     print "$stored_txt $en2$en2        =" .kWh($charge_sum)." $after $charging_loss_txt\n";
-    printf "$cycles_txt $de1                =  %3d $of_eff_cap_txt\n", ($cycles + .5);
+    printf "$cycles_txt $de1                =  %3d $of_eff_cap_txt\n", round($cycles);
     print "\n";
 }
 

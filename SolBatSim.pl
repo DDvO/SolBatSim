@@ -18,10 +18,10 @@
 #   [-pass [spill] <konstante Speicher-Umgehung in W zusätzlich zu 'direct',
 #                   mit 'spill' or AC-Kopplung auch bei vollem Speicher>]
 #   [-feed (max <begrenzte bedarfsgerechte Entladung aus Speicher in W>
-#           | comp <Einspeiseziel in W bis zu dem der Speicher die PV kompensiert>
-#           | excl <Grenzwert in W zur Speicherentladung statt PV-Nutzung>
-#           | [<von Uhrzeit, sonst 0 Uhr>..<bis Uhrzeit, sonst 24 Uhr>]
-#             <konstante Entladung aus Speicher in W> )]
+#         | comp <Einspeiseziel in W bis zu dem der Speicher die PV kompensiert>
+#         | excl <Grenzwert in W zur Speicherentladung statt PV-Nutzung>
+#         | <konstante Entladung aus Speicher in W> [<von Uhrzeit, sonst 0 Uhr>
+#           ..<bis Uhrzeit, sonst 24 Uhr, auch über Mitternacht>] )]
 #   [-max_charge <Ladehöhe in %, sonst 90> [<max Laderate, sonst 1 C>]]
 #   [-max_discharge <Entladetiefe in %, sonst 90> [<Rate, sonst 1 C>]]
 #   [-ceff <Lade-Wirkungsgrad in %, ansonsten 94>]
@@ -67,17 +67,17 @@
 #   [-bend <load distort factors for hour 0,..,23 each day, default 1>
 #   [-load [min] <constant load, at same scale as in PV data file>
 #          [<count of days per week starting Monday, default 5>:<from hour,
-#           default 8 o'clock>..<to hour, default 16>, also across midnight]]
+#           default 8 o'clock>..<to hour, default 16, also across midnight>]]
 #   [-avg_hour] [-verbose]
 #   [-peff <PV system efficiency in %, default from PV data file(s)>]
 #   [-ac | -dc] [-capacity <storage capacity in Wh, default 0 (no battery)>]
 #   [-pass [spill] <constant storage bypass in W in addition to 'direct',
 #                   with 'spill' or AC coupling also when storage is full>]
 #   [-feed (max <limited feed-in from storage in W according to load>
-#           | comp <target rate in W up to which storage compensates PV output>
-#           | excl <threshold in W for discharging storage instead of using PV>
-#           | [<from hour, default 0>..<to hour, default 24>]
-#             <constant feed-in from storage in W> )]
+#         | comp <target rate in W up to which storage compensates PV output>
+#         | excl <threshold in W for discharging storage instead of using PV>
+#         | <constant feed-in from storage in W>
+#           [<from hour, default 0>..<to hr, default 24, also over midnight>] )]
 #   [-max_charge <SoC in %, default 90> [<max charge rate, default 1 C>]]
 #   [-max_discharge <DoD in %, default 90> [<max rate, default 1 C>]]
 #   [-ceff <charging efficiency in %, default 94>]
@@ -158,7 +158,7 @@ my $comp_feed = 0;    # $max_feed target power for storage compensating PV out,
                       # relevant only if defined $max_feed
 my $excl_feed = 0;    # $max_feed is threshold in W for discharging storage
                       # instead of using PV, relevant only if defined $bypass
-my $const_feed  =  1; # constant feed-in, relevant only if defined $max_feed
+my $const_feed  =  0; # constant feed-in, relevant only if defined $max_feed
 my $feed_from   =  0; # hour of constant feed-in begin
 my $feed_to     = 24; # hour of constant feed-in end
 my $AC_coupled  = -1; # by default, charging is AC-coupled (via inverter)
@@ -264,16 +264,17 @@ while ($#ARGV >= 0) {
                                         if ($#ARGV >= 1 && ($mod eq "max" ||
                                                             $mod eq "comp" ||
                                                             $mod eq "excl")) {
-                                            $const_feed = 0;
                                             $comp_feed = 1 if $mod eq "comp";
                                             $excl_feed = 1 if $mod eq "excl";
                                             shift @ARGV;
+                                        } else {
+                                            $const_feed = 1;
                                         }
-                                       ($feed_from, $feed_to)
-                                           = ($1, $2) if $#ARGV >= 1 &&
-                                           $mod =~ m/^(\d+)\.\.(\d+)$/
-                                           && shift @ARGV;
                                         $max_feed     = num_arg();
+                                        ($feed_from, $feed_to) = ($1, $2)
+                                            if $const_feed && $#ARGV >= 0
+                                            && $ARGV[0] =~ m/^(\d+)\.\.(\d+)$/
+                                            && shift @ARGV;
     } elsif ($ARGV[0] eq "-max_charge") { $max_soc    = eff_arg();
                                         $max_chgrate =shift @ARGV if $#ARGV >= 0
                                             && $ARGV[0] =~ m/^([\d\.]+)$/;
@@ -1728,7 +1729,7 @@ my $feed_txt        = $excl_feed
                     ? ($en ? "compensation "        : "Kompensations")
                     : ($en ?  "maximal "            : "Maximal"))
                      .($en ? "feed-in"              : "einspeisung");
-my $feed_during_txt  =!$const_feed || from_to_hours_str($feed_from, $feed_to);
+my $feed_during_txt= $const_feed ? from_to_hours_str($feed_from, $feed_to) : "";
 my $max_disrate_txt  = $en ? "max discharge rate"   : "max. Entladerate";
 my $ceff_txt         = $en ? "charging efficiency"  : "Lade-Wirkungsgrad";
 my $seff_txt         = $en ? "storage efficiency"   : "Speicher-Wirkungsgrad";

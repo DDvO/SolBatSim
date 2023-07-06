@@ -1058,6 +1058,7 @@ my @grid_feed_per_hour = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
 my @grid_feed_max_hour = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
 my @grid_feed;
 my $grid_feed_sum = 0;
+my $dis_feed_sum = 0; # grid feed-in via inefficient storage discharge
 
 my $soc_max = $capacity *      $max_soc  if defined $capacity;
 my $soc_min = $capacity * (1 - $max_dod) if defined $capacity;
@@ -1247,6 +1248,7 @@ sub simulate_item {
     }
     my $power_needed = $load - $pv_used;
 
+    my $dis_feed_in = 0; # grid feed-in via inefficient storage discharge
     my $PV_loss_curr = $PV_loss if $PV_loss != 0;
     if (defined $capacity) { # storage present
         $PV_loss_curr = $PV_loss_capa if $PV_loss != 0 && $maybe_loss == 0;
@@ -1327,10 +1329,12 @@ sub simulate_item {
                 if (defined $max_feed_scaled_by_eff &&
                     ($comp_feed || $excl_feed || $const_feed)) {
                     # $feed_sum += $discharge;
-                    my $dis_feed_in = $discharge_net - $power_needed;
+                    $dis_feed_in = $discharge_net - $power_needed;
                     if ($dis_feed_in > 0) {
                         $grid_feed_in  += $dis_feed_in;
                         $discharge_net -= $dis_feed_in;
+                    } else {
+                        $dis_feed_in = 0;
                     }
                 }
                 $pv_used += $discharge_net;
@@ -1376,7 +1380,7 @@ sub simulate_item {
     }
     printf "\n" if $trace;
 
-    return ($pv_used, $pv_use_loss, $grid_feed_in,
+    return ($pv_used, $pv_use_loss, $grid_feed_in, $dis_feed_in,
             $charge_delta, $dischg_delta, $coupling_loss);
 
 }
@@ -1385,7 +1389,7 @@ sub simulate_hour {
     my ($year_str, $year, $month, $day, $hour,
         $gross_power, $pvnet_power, $pvnet_direct) = @_;
 
-    my ($hpv_used, $hgrid_feed) = (0, 0);
+    my ($hpv_used, $hgrid_feed, $hdis_feed) = (0, 0, 0);
     my $hpv_use_loss = 0 if $curb;
     my ($hcharge_delta, $hdischg_delta, $hcpl_loss) = (0, 0, 0) if $capacity;
     # my $needed = 0;
@@ -1449,11 +1453,11 @@ sub simulate_hour {
     my $trace = $test ? ($day - 1) * 24 + $hour >= TEST_START : $debug;
     # my $feed_sum = 0 if defined $max_feed_scaled_by_eff;
     for (my $item = 0; $item < $items; $item++) {
-        my ($pvu, $pul, $gfi, $chg, $dis, $cpl) =
+        my ($pvu, $pul, $gfi, $dfi, $chg, $dis, $cpl) =
         simulate_item($year_str, $month, $day, $hour,
                       $gross_power, $pvnet_power, $pvnet_direct,
                       $item, $items, $trace, $PV_loss, $PV_loss_capa);
-        ($hpv_used += $pvu, $hgrid_feed += $gfi);
+        ($hpv_used += $pvu, $hgrid_feed += $gfi, $hdis_feed += $dfi);
         $hpv_use_loss += $pul if $curb;
         $grid_feed_max_hour[$hour] = max($grid_feed_max_hour[$hour], $gfi);
         if ($capacity) {
@@ -1486,9 +1490,11 @@ sub simulate_hour {
         # revert factoring out $items for optimizing the inner loop
         $hpv_used /= $items;
         $hgrid_feed /= $items;
+        $hdis_feed /= $items;
     }
     $PV_used_sum += $hpv_used;
     $grid_feed_sum += $hgrid_feed;
+    $dis_feed_sum  += $hdis_feed;
 
     if (defined $capacity) {
         if ($items != 1) {
@@ -1607,6 +1613,7 @@ sub simulate()
     $PV_use_loss_sum *= $load_scale / $years if $curb;
     $PV_used_sum *= $load_scale / $years;
     $grid_feed_sum *= $load_scale / $years;
+    $dis_feed_sum  *= $load_scale / $years;
     # $sum_needed = rls($sum_needed);
     # die "Internal error: load sum = $load_sum vs. needed = $sum_needed"
     #     if $load_sum != $sum_needed;
@@ -1689,6 +1696,8 @@ my $by_curb = "$by_txt $curb_txt";
 my $with             = $en ? "with"                 : "mit";
 my $without          = $en ? "without"              : "ohne";
 my $grid_feed_txt    = $en ? "grid feed-in"         : "Netzeinspeisung";
+my $dis_feed_txt     =
+    $grid_feed_txt   .($en ? " via storage"         : " via Speicher");
 my $charge_txt       = $en ? "charge (before storage losses)"
                            : "Ladung (vor Speicherverlusten)";
 my $dischg_txt       = $en ? "discharge"            : "Entladung";
@@ -1828,13 +1837,13 @@ sub save_statistics {
             .(percent($storage_eff) / 100)."\n";
         print $OU "$spill_loss_txt in kWh,"
             ."$charging_loss_txt in kWh,$storage_loss_txt in kWh,"
-            ."$coupl_loss_txt in kWh,"
+            ."$coupl_loss_txt in kWh,$dis_feed_txt in kWh,"
             .($excl_feed ? "$PV_discarded_txt in kWh," : "")
             ."$own_storage_txt in kWh,$max_soc_txt in Wh $PV_net_max_time,"
             ."$stored_txt in kWh,$cycles_txt $of_eff_cap_txt\n";
         print $OU "".round_1000($spill_loss * $inverter_eff).","
             .round_1000($charging_loss).",".round_1000($storage_loss).","
-            .round_1000($coupling_loss).","
+            .round_1000($coupling_loss).",".round_1000($dis_feed_sum).","
             .($excl_feed ? round_1000($PV_net_discarded_sum)."," : "")
             .round_1000($PV_used_via_storage).",".round($soc_max_reached)
             .",".round_1000($charge_sum).",$cycles\n";
@@ -2057,11 +2066,11 @@ if ($verbose) {
 print "$PV_gross_txt $en1            =".kWh($PV_gross_sum)."\n";
 print "$PV_DC_txt $en1               =" .kWh($PV_DC_sum).
     ", $pvsys_eff_txt ".percent($pvsys_eff)."%\n";
-print "$net_max_txt $en4$en1      =".W($PV_net_max)." $PV_net_max_time\n";
 print "$PV_loss_txt $en2 $en2 $en2  ="       .kWh($PV_losses).
     " $during_txt ".round($PV_loss_hours)." h $by_curb_at $curb W\n" if $curb;
 print "$PV_net_txt $en2             =" .kWh($PV_net_sum).
     " $at $ieff_txt ".percent($inverter_eff)."%\n";
+print "$net_max_txt $en4$en1      =".W($PV_net_max)." $PV_net_max_time\n";
 #print "$yield_portion $daytime  =   $yield_daytime %\n";
 #my $yield_daytime =
 #    percent($PV_net_sum ? $PV_net_bright_sum / $PV_net_sum : 0);
@@ -2096,6 +2105,7 @@ if (defined $capacity) {
     print "$PV_discarded_txt $en3$en1     =".
         kWh($PV_net_discarded_sum)."\n" if $excl_feed;
     print "$own_storage_txt $en2   =".kWh($PV_used_via_storage)."\n";
+    print "$dis_feed_txt$en3$en1=".kWh($dis_feed_sum)."\n";
     if ($verbose && defined $capacity) {
         print_arr_day("$hour_txt                     $en2 = ", \@hours);
         print_arr_day(    "$c_txt$de2= ", \@charge_per_hour);

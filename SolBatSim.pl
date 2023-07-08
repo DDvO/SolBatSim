@@ -15,13 +15,14 @@
 #   [-avg_hour] [-verbose]
 #   [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
 #   [-ac | -dc] [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>]
-#   [-pass [spill] <konstante Speicher-Umgehung in W zusätzlich zu 'direct',
+#   [-pass [spill] <konstante Speicher-Umgehung in W zusätzlich zu 'direct' PV,
 #                   mit 'spill' or AC-Kopplung auch bei vollem Speicher>]
-#   [-feed (max <begrenzte bedarfsgerechte Entladung aus Speicher in W>
+#   [-feed ( lim <Begrenzung der lastoptimierten Entladung aus Speicher in W>
 #         | comp <Einspeiseziel in W bis zu dem der Speicher die PV kompensiert>
 #         | excl <Grenzwert in W zur Speicherentladung statt PV-Nutzung>
-#         | <konstante Entladung aus Speicher in W> [<von Uhrzeit, sonst 0 Uhr>
-#           ..<bis Uhrzeit, sonst 24 Uhr, auch über Mitternacht>] )]
+#         | <konstante Entladung aus Speicher in W> )
+#         [<von Uhrzeit, sonst 0 Uhr>..
+#          <bis Uhrzeit, sonst 24 Uhr, auch über Mitternacht>]]
 #   [-max_charge <Ladehöhe in %, sonst 90> [<max Laderate, sonst 1 C>]]
 #   [-max_discharge <Entladetiefe in %, sonst 90> [<Rate, sonst 1 C>]]
 #   [-ceff <Lade-Wirkungsgrad in %, ansonsten 94>]
@@ -71,13 +72,13 @@
 #   [-avg_hour] [-verbose]
 #   [-peff <PV system efficiency in %, default from PV data file(s)>]
 #   [-ac | -dc] [-capacity <storage capacity in Wh, default 0 (no battery)>]
-#   [-pass [spill] <constant storage bypass in W in addition to 'direct',
+#   [-pass [spill] <constant storage bypass in W in addition to 'direct PV',
 #                   with 'spill' or AC coupling also when storage is full>]
-#   [-feed (max <limited feed-in from storage in W according to load>
+#   [-feed ( lim <limit of optimal feed (according to load) from storage in W >
 #         | comp <target rate in W up to which storage compensates PV output>
 #         | excl <threshold in W for discharging storage instead of using PV>
-#         | <constant feed-in from storage in W>
-#           [<from hour, default 0>..<to hr, default 24, also over midnight>] )]
+#         | <constant feed-in from storage in W> )
+#         [<from hour, default 0>..<to hour, default 24, also over midnight>]]
 #   [-max_charge <SoC in %, default 90> [<max charge rate, default 1 C>]]
 #   [-max_discharge <DoD in %, default 90> [<max rate, default 1 C>]]
 #   [-ceff <charging efficiency in %, default 94>]
@@ -261,7 +262,7 @@ while ($#ARGV >= 0) {
                                             $ARGV[1] eq "spill" && shift @ARGV;
                                         $bypass       = num_arg();
     } elsif ($ARGV[0] eq "-feed"    ) { my $mod = $ARGV[1];
-                                        if ($#ARGV >= 1 && ($mod eq "max" ||
+                                        if ($#ARGV >= 1 && ($mod eq "lim" ||
                                                             $mod eq "comp" ||
                                                             $mod eq "excl")) {
                                             $comp_feed = 1 if $mod eq "comp";
@@ -272,7 +273,7 @@ while ($#ARGV >= 0) {
                                         }
                                         $max_feed     = num_arg();
                                         ($feed_from, $feed_to) = ($1, $2)
-                                            if $const_feed && $#ARGV >= 0
+                                            if $#ARGV >= 0
                                             && $ARGV[0] =~ m/^(\d+)\.\.(\d+)$/
                                             && shift @ARGV;
     } elsif ($ARGV[0] eq "-max_charge") { $max_soc    = eff_arg();
@@ -1275,34 +1276,35 @@ sub simulate_item {
             my $discharge = $power_needed /
                 ($storage_eff_never_0 * $inverter2_eff_never_0);
             if (defined $max_feed_scaled_by_eff) {
-                if ($comp_feed || $excl_feed) {
+                my $active = $feed_from > $feed_to
+                    ? ($feed_from <= $hour || $hour < $feed_to)
+                    : ($feed_from <= $hour && $hour < $feed_to);
+                if ($comp_feed || $excl_feed || $const_feed) {
                     $discharge = 0;
-                    my $pv_power = $pvnet_power - $pvnet_direct;
-                    my $target_power =
-                        $excl_feed ? $bypass : $max_feed_scaled_by_eff;
-                    my $compensation = $target_power - $pv_power;
-                    if ($comp_feed) {
-                        $discharge = $compensation if $compensation > 0;
-                    } elsif ($pv_power <= $target_power &&
-                             $pv_power <= $excl_threshold &&
-                             $compensation > $excl_threshold) {
-                        $discharge = $target_power;
-                        # unfortunately, exclusive feed discards $pv_power:
-                        $PV_net_discarded_sum += $pv_power*$load_scale / $items;
-                        $pv_used -= $pv_power;
-                        if ($pv_used < 0) {
-                            $grid_feed_in += $pv_used;
-                            $pv_used = 0;
+                    if ($active) {
+                        my $pv_power = $pvnet_power - $pvnet_direct;
+                        my $target_power =
+                            $excl_feed ? $bypass : $max_feed_scaled_by_eff;
+                        my $compensation = $target_power - $pv_power;
+                        if ($const_feed) {
+                            $discharge = $max_feed_scaled_by_eff if $active;
+                        } elsif ($comp_feed) {
+                            $discharge = $compensation if $compensation > 0;
+                        } elsif ($pv_power <= $target_power &&
+                                 $pv_power <= $excl_threshold &&
+                                 $compensation > $excl_threshold) {
+                            $discharge = $target_power;
+                            # unfortunately, exclusive feed discards $pv_power:
+                            $PV_net_discarded_sum +=
+                                $pv_power * $load_scale / $items;
+                            $pv_used -= $pv_power;
+                            if ($pv_used < 0) {
+                                $grid_feed_in += $pv_used;
+                                $pv_used = 0;
+                            }
                         }
                     }
-                }
-                elsif ($const_feed) {
-                    $discharge = 0;
-                    $discharge = $max_feed_scaled_by_eff
-                        if $feed_from > $feed_to
-                           ? ($feed_from <= $hour || $hour < $feed_to)
-                           : ($feed_from <= $hour && $hour < $feed_to);
-                } else { # optimal but limited feed
+                } elsif ($active) { # limit the optimal feed if active
                     $discharge = $max_feed_scaled_by_eff
                         if $discharge > $max_feed_scaled_by_eff;
                 }
@@ -1727,7 +1729,7 @@ my $feed_txt        = $excl_feed
                     ? ($en ? "constant "            : "Konstant")
                     :  $comp_feed
                     ? ($en ? "compensation "        : "Kompensations")
-                    : ($en ?  "maximal "            : "Maximal"))
+                    : ($en ?  "limited "            : "Maximal"))
                      .($en ? "feed-in"              : "einspeisung");
 my $feed_during_txt= $const_feed ? from_to_hours_str($feed_from, $feed_to) : "";
 my $max_disrate_txt  = $en ? "max discharge rate"   : "max. Entladerate";

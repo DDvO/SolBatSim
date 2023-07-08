@@ -1281,19 +1281,24 @@ sub simulate_item {
                     : ($feed_from <= $hour && $hour < $feed_to);
                 if ($comp_feed || $excl_feed || $const_feed) {
                     $discharge = 0;
-                    if ($active) {
+                    if ($const_feed) {
+                        $discharge = $max_feed_scaled_by_eff if $active;
+                    } elsif ($active) { # for $comp_feed || $excl_feed
                         my $pv_power = $pvnet_power - $pvnet_direct;
-                        my $target_power =
-                            $excl_feed ? $bypass : $max_feed_scaled_by_eff;
+                        $pv_power = $bypass if $comp_feed &&
+                            defined $bypass && $bypass < $pv_power;
+                        my $target_power = $excl_feed ? $bypass :
+                            $max_feed / $load_scale_never_0;
                         my $compensation = $target_power - $pv_power;
-                        if ($const_feed) {
-                            $discharge = $max_feed_scaled_by_eff if $active;
-                        } elsif ($comp_feed) {
-                            $discharge = $compensation if $compensation > 0;
+                        if ($comp_feed) {
+                            $discharge = $compensation  /
+                                ($storage_eff_never_0 * $inverter2_eff_never_0)
+                                if $compensation > 0;
                         } elsif ($pv_power <= $target_power &&
                                  $pv_power <= $excl_threshold &&
                                  $compensation > $excl_threshold) {
-                            $discharge = $target_power;
+                            $discharge = $target_power /
+                                ($storage_eff_never_0 * $inverter2_eff_never_0);
                             # unfortunately, exclusive feed discards $pv_power:
                             $PV_net_discarded_sum +=
                                 $pv_power * $load_scale / $items;

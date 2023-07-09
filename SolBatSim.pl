@@ -1569,7 +1569,7 @@ sub simulate()
     my $first_year = $year;
 
     STDOUT->autoflush(1);
-    print "$simul_year$en2         ="
+    print "$simul_year$en2         :"
         unless $test;
     while ($year < $end_year) {
         my $year_str = $tmy ? "TMY" : $start_year + $year;
@@ -1752,7 +1752,8 @@ my $charging_loss_txt= $en ? "charging loss"        : "Ladeverlust";
 my $storage_loss_txt = $en ? "storage loss"         : "Speicherverlust";
 my $cycles_txt       = $en ? "full cycles" : "Vollzyklen";
 # Vollzyklen: Kapazitätsdurchgänge, Kapazitätsdurchsatz
-my $of_eff_cap_txt   = $en ? "of effective capacity":"der effektiven Kapazität";
+my $of_eff_cap_txt   = $en ? "(of effective capacity)"
+                           :" (der effektiven Kapazität)";
 my $ph               = $en ? "p. hour"              : "je Std";
 my $c_txt            = $en?"average charge power $ph":"Mittlere Ladeleist. $ph";
 my $c_Txt            = $en ? $c_txt               : "Mittlere Ladeleistung $ph";

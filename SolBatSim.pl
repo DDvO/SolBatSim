@@ -1680,6 +1680,7 @@ for (my $hour = 0; $hour < 24; $hour++) {
 my $nominal_txt      = $en ? "nominal PV power"     : "PV-Nominalleistung";
 my $due_to           = $en ? "due to"               : "durch";
 my $because          = $en ? "because"              : "weil";
+my $Adapted_txt      = $en ? "adapted"              : "Adaptierte";
 my $gross_max_txt    = $en ? "max gross PV power"   : "Max. PV-Bruttoleistung";
 my $net_max_txt      = $en ? "max net PV power"     : "Max. PV-Nettoleistung";
 my $curb_txt         = $en ? "inverter output curb" : "WR-Ausgangs-Drosselung";
@@ -1695,13 +1696,14 @@ my $PV_txt   = $DC_coupled ? $PV_DC_txt             : $PV_net_txt;
 my $of_yield         = $en ? "of $PV_txt"     :"des $PV_txt"."s (Nutzungsgrad)";
 my $of_consumption   = $en ? "of consumption" : "des Verbrauchs (Autarkiegrad)";
 my $PV_loss_txt      = $en ? "PV yield net loss"    : "PV-Netto-Ertragsverlust";
-my $load_const_txt   = $en ? ($load_min ? "minimal" : "constant")." load"
-                           : ($load_min ? "Minimale": "Konstante")." Last".
-                             ($load_min ? " " : "");
+my $load_adapted_txt = "$Adapted_txt ".
+                      ($en ? ($load_min ? "minimal" : "constant")." load"
+                           : ($load_min ? "minimale": "konstante")." Last".
+                             ($load_min ? " " : ""));
 my @weekdays         = $en ? ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
                            : ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So");
 my $dx = $load_days - 1;
-my $load_during_txt  =($load_days == 7 ? "" :
+my $load_during_txt  = ($load_days == 7 ? "" :
            ($en ? " on Mon".($load_days == 1 ? "days"   : "..$weekdays[$dx]")
                 : " an Mo" .($load_days == 1 ? "ntagen" : "..$weekdays[$dx]"))).
                        from_to_hours_str($load_from, $load_to)
@@ -1822,7 +1824,7 @@ sub save_statistics {
     my $limits_sum  = $#PV_limit == 0 ? $PV_limit[0] : "$PV_limit";
     print $OU "$consumpt_txt$timeframe in kWh,$profile_txt,";
     print $OU "$b_txt in W".from_to_hours_str(NIGHT_START, NIGHT_END).",";
-    print $OU "$load_const_txt in W$load_during_txt," if defined $load_const;
+    print $OU "$load_adapted_txt in W$load_during_txt," if defined $load_const;
     print $OU "$m_txt in W $load_min_time,";
     print $OU "$M_txt in W $load_max_time,";
     print $OU "$pv_data_txt$plural_txt".($tmy ? " $during_txt $TMY" : "").
@@ -2100,7 +2102,7 @@ print "$net_max_txt $en4$en1      =".W($PV_net_max)." $PV_net_max_time\n";
 
 print "\n";
 print "$consumpt_txt $de2                =".kWh($sel_load_sum)."$timeframe\n";
-print "$load_const_txt $en1 ".($load_min ? "$en1" : "")."            ="
+print "$load_adapted_txt $en1 ".($load_min ? "$en1" : "")."$en3 ="
     .W($load_const)."$load_during_txt\n" if defined $load_const;
 if (defined $capacity) {
     print "\n".

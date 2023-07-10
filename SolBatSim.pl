@@ -439,7 +439,8 @@ sub check_consistency { my ($actual, $expected, $name, $file) = @_;
         if $actual != $expected;
 }
 
-my $no_time_txt = $en ? "at no time" : "zu keiner Zeit";
+my $none_txt    = $en ? "none"                  : "keine";
+my $no_time_txt = $en ? "at no time"            : "zu keiner Zeit";
 
 sub date_hour_str { my ($year, $month, $day, $hour) = @_;
     $year = "*" if $year eq "0";
@@ -498,12 +499,14 @@ sub selected { my ($m, $d, $h) = @_;
 }
 
 # all hours according to local time without switching to daylight saving time
-use constant NIGHT_START =>  0; # at night (with just basic load)
+use constant NIGHT_START =>  0; # at night (with just base load)
 use constant NIGHT_END   =>  6;
 
 my $sum_items = 0;
 my ($sel_items, $sel_hours) = 0; # items/hours a year selected by -only
-my $load_max = 0;
+my $base_load;    # left undefined
+my $load_min_time = $no_time_txt;
+my $load_max      = 0;
 my $load_max_time = $no_time_txt;
 my $night_sum = 0;
 my ($load_sum, $sel_load_sum) = (0, 0);
@@ -698,6 +701,11 @@ sub get_profile {
                         $load_item[$month][$day][$hour][$item] = $load;
                     }
                     if ($sel) {
+                        if (!defined $base_load || $load < $base_load) {
+                            $base_load = $load;
+                            $load_min_time = time_str($year, $month, $day,
+                                                      $hour, $item, $items);
+                        }
                         if ($load > $load_max) {
                             $load_max = $load;
                             $load_max_time = time_str($year, $month, $day,
@@ -751,6 +759,7 @@ for (my $hour = 0; $hour < 24; $hour++) {
 }
 $load_const = rls($load_const) if defined $load_const;
 $load_sum = rls($load_sum);
+$base_load= rls($base_load) if defined $base_load;
 $load_max = rls($load_max);
 
 my $profile_txt = $en ? "load profile file"     : "Lastprofil-Datei";
@@ -758,7 +767,7 @@ my $pv_data_txt = $en ? "PV data file"          : "PV-Daten-Datei";
 my $plural_txt  = $en ? "(s)"                   : "(en)";
 my $direct_txt  = $en ? "direct"                : "direkt";
 my $limit_txt   = $en ? "inverter input limit"  : "WR-Eingangs-Begrenzung";
-my $none_txt    = $en ? "(0 = none)"            : "(0 = keine)";
+my $none0_txt   = $en ? "(0 means none)"        : "(0 bedeutet keine)";
 my $slope_txt   = $en ? "slope"                 : "Neigungswinkel";
 my $azimuth_txt = $en ? "azimuth"               : "Azimut";
 my $yearly_txt  = $en ? "over a year"           : "über ein Jahr";
@@ -787,7 +796,8 @@ my $V_txt = $en ? "PV portion"                  : "PV-Anteil";
 my $per3  = $en ? "per 3 hours"                 : "pro 3 Stunden";
 my $per_m = $en ? "per month"                   : "pro Monat";
 my $W_txt = $en ? "portion per weekday (Mo-Su)" :"Anteil pro Wochentag (Mo-So)";
-my $b_txt = $en ? "basic load on average"       : "Grundlast im Durchschnitt";
+my $b_txt = $en ? "nightly load on average"     :"Nächtliche Durchschnittslast";
+my $m_txt = $en ? "min load (base load)"        : "Minimallast (Grundlast)";
 my $M_txt = $en ? "max load"                    : "Maximallast";
 my $en1 = $en ? " "   : "";
 my $en2 = $en ? "  "  : "";
@@ -818,10 +828,12 @@ if ($verbose) {
     print "$consumpt_txt $de2                =".kWh(rls($sel_load_sum)).
         "$timeframe\n" if $only;
 }
-my $basic_load = $night_sum * $sn;
-$basic_load /= (NIGHT_END - NIGHT_START) if $hours_a_day == 24;
-print "$b_txt $en2 $en2 =".W(rls($basic_load)).
+my $night_avg_load = $night_sum * $sn;
+$night_avg_load /= (NIGHT_END - NIGHT_START) if $hours_a_day == 24;
+print "$b_txt$en3$en2=".W(rls($night_avg_load)).
     from_to_hours_str(NIGHT_START, NIGHT_END)."\n";
+print "$m_txt $en3    =".(defined $base_load ? W($base_load) : " $none_txt")
+                                                          ." $load_min_time\n";
 print          "$M_txt $en3                =".W($load_max)." $load_max_time\n";
 print_arr_day( "$D_txt $en1= ", \@load_dist   ) if defined $load_dist;
 print_arr_day("$d_txt $de1 = ", \@load_factors) if defined $load_factors;
@@ -1811,14 +1823,16 @@ sub save_statistics {
     print $OU "$consumpt_txt$timeframe in kWh,$profile_txt,";
     print $OU "$b_txt in W".from_to_hours_str(NIGHT_START, NIGHT_END).",";
     print $OU "$load_const_txt in W$load_during_txt," if defined $load_const;
+    print $OU "$m_txt in W $load_min_time,";
     print $OU "$M_txt in W $load_max_time,";
     print $OU "$pv_data_txt$plural_txt".($tmy ? " $during_txt $TMY" : "").
         "$only_during\n";
-    print $OU round_1000($sel_load_sum).",$load_profile,".rls($basic_load).",";
+    print $OU round_1000($sel_load_sum).",$load_profile,"
+        .rls($night_avg_load).",";
     print $OU "$load_const," if defined $load_const;
-    print $OU "$load_max,".join(",", @PV_files)."\n";
+    print $OU "$base_load,$load_max,".join(",", @PV_files)."\n";
 
-    print $OU "$nominal_txt in Wp,$limit_txt in W $none_txt,"
+    print $OU "$nominal_txt in Wp,$limit_txt in W $none0_txt,"
         ."$gross_max_txt in W $PV_gross_max_time,"
         ."$net_max_txt in W $PV_net_max_time,"
         ."$curb_txt in W,$pvsys_eff_txt,$PV_DC_txt,$ieff_txt,"
@@ -2057,7 +2071,7 @@ my $yield_portion  = $en ? "yield portion"        : "Ertragsanteil";
 # PV-Abregelungsverlust"
 my $nominal_sum = $#PV_nomin == 0 ? "" : " = $PV_nomin Wp";
 my $limits_sum = $total_limit == 0 ? "" :
-    ", $limit_txt: ".$PV_limit." W".($#PV_limit == 0 ? "" : " $none_txt");
+    ", $limit_txt: ".$PV_limit." W".($#PV_limit == 0 ? "" : " $none0_txt");
 
 print "$energy_txt $on_average_txt\n" if $years > 1;
 print "\n" unless $test;

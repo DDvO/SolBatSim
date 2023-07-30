@@ -1801,8 +1801,8 @@ if (defined $capacity) { # also for future loss when discharging the rest:
             if abs($discrepancy) > 0.001; # 1 mWh
     }
     $storage_loss = $charge_sum * (1 - $storage_eff); # including future dischg
-    $cycles = round($charge_sum / ($soc_max - $soc_min)) if $capacity != 0;
-    $cycles-- if $cycles > 0 && $soc > $soc_min;
+    $cycles = round($dischg_sum / $storage_eff_never_0 / # really storage_eff ?
+                    ($soc_max - $soc_min)) if $capacity != 0;
     if ($DC_coupled) {
         $DC_feed_loss =
             ($PV_used_sum + $grid_feed_sum - $dischg_sum * $inverter2_eff) *

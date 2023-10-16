@@ -5,7 +5,7 @@
 # und optional mit Stromspeicher (Batterie o.ä.)
 #
 # Nutzung: Solar.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
-#   (<PV-Datei> [direct] [<Nominalleistung Wp> [<WR-Eingangsbegrenzung in W>]])+
+#   (<PV-Datei> [direct] [<Nennleistung Wp> [<WR-Eingangsbegrenzung in W>]])+
 #   [-only <*|Jahr[..Jahr]>[-<*|Mon[..Mon]>[-<*|Tag[..Tag]>[:<*|Std[..Std]]]]]
 #   [-dist <relative Lastverteilung über den Tag pro Stunde 0,..,23>
 #   [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>
@@ -802,7 +802,9 @@ my $M_txt = $en ? "max load"                    : "Maximallast";
 my $en1 = $en ? " "   : "";
 my $en2 = $en ? "  "  : "";
 my $en3 = $en ? "   " : "";
-my $en4 = $en ? "    ": "";
+my $en4 = $en2.$en2;
+my $en5 = $en2.$en3;
+my $en6 = $en3.$en3;
 my $de1 = $en ? ""    : " ";
 my $de2 = $en ? ""    : "  ";
 my $de3 = $en ? ""    : "   ";
@@ -830,7 +832,7 @@ if ($verbose) {
 }
 my $night_avg_load = $night_sum * $sn;
 $night_avg_load /= (NIGHT_END - NIGHT_START) if $hours_a_day == 24;
-print "$b_txt$en3$en2=".W(rls($night_avg_load)).
+print "$b_txt$en5=".W(rls($night_avg_load)).
     from_to_hours_str(NIGHT_START, NIGHT_END)."\n";
 print "$m_txt $en3    =".(defined $base_load ? W($base_load) : " $none_txt")
                                                           ." $load_min_time\n";
@@ -1018,7 +1020,7 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
         $azimuth =~ s/ deg\./°/;
         $slope   =~ s/optimum/opt./;
         $azimuth =~ s/optimum/opt./;
-        print "$slope_txt, $azimuth_txt$en3$en3$en2      = $slope, $azimuth\n";
+        print "$slope_txt, $azimuth_txt$en3$en5      = $slope, $azimuth\n";
     }
     return $nominal_power;
 }
@@ -1677,7 +1679,7 @@ for (my $hour = 0; $hour < 24; $hour++) {
 ################################################################################
 # statistics output
 
-my $nominal_txt      = $en ? "nominal PV power"     : "PV-Nominalleistung";
+my $nominal_power_txt= $en ? "nominal PV power"     : "PV-Nennleistung";
 my $due_to           = $en ? "due to"               : "durch";
 my $because          = $en ? "because"              : "weil";
 my $Adapted_txt      = $en ? "adapted"              : "Adaptierte";
@@ -1834,7 +1836,7 @@ sub save_statistics {
     print $OU "$load_const," if defined $load_const;
     print $OU "$base_load,$load_max,".join(",", @PV_files)."\n";
 
-    print $OU "$nominal_txt in Wp,$limit_txt in W $none0_txt,"
+    print $OU "$nominal_power_txt in Wp,$limit_txt in W $none0_txt,"
         ."$gross_max_txt in W $PV_gross_max_time,"
         ."$net_max_txt in W $PV_net_max_time,"
         ."$curb_txt in W,$pvsys_eff_txt,$PV_DC_txt,$ieff_txt,"
@@ -2077,7 +2079,7 @@ my $limits_sum = $total_limit == 0 ? "" :
 
 print "$energy_txt $on_average_txt\n" if $years > 1;
 print "\n" unless $test;
-print "$nominal_txt $en2         =" .W($nominal_power_sum)."p$nominal_sum".
+print "$nominal_power_txt $de1           =" .W($nominal_power_sum)."p$nominal_sum".
     "$only_during$limits_sum\n";
 print "$gross_max_txt $en4     =".W($PV_gross_max)." $PV_gross_max_time\n";
 if ($verbose) {
@@ -2127,10 +2129,10 @@ if (defined $capacity) {
         ." $due_to $seff_txt ".percent($storage_eff)."%\n";
     print "$coupl_loss_txt $en3 $en1 ".($AC_coupled ? "$de2" : "")."=".
        kWh($coupling_loss)." $due_to $ieff2_txt ".percent($inverter2_eff)."%\n";
-    print "$PV_discarded_txt $en3$en1     =".
+    print "$PV_discarded_txt $en4$     =".
         kWh($PV_net_discarded_sum)."\n" if $excl_feed;
     print "$own_storage_txt $en2   =".kWh($PV_used_via_storage)."\n";
-    print "$dis_feed_txt$en3$en1=".kWh($dis_feed_sum)."\n";
+    print "$dis_feed_txt$en4=".kWh($dis_feed_sum)."\n";
     if ($verbose && defined $capacity) {
         print_arr_day("$hour_txt                     $en2 = ", \@hours);
         print_arr_day(    "$c_txt$de2= ", \@charge_per_hour);
@@ -2138,9 +2140,9 @@ if (defined $capacity) {
         print_arr_day(    "$C_txt"." = ", \@dischg_per_hour);
         print_arr_day("$C_max_txt"." = ", \@dischg_max_hour);
     }
-    printf "$max_soc_txt $en3$en3              =%5d Wh $soc_max_time\n",
+    printf "$max_soc_txt $en6              =%5d Wh $soc_max_time\n",
         round($soc_max_reached);
-    print "$stored_txt $en2$en2        =" .kWh($charge_sum)." $after $charging_loss_txt\n";
+    print "$stored_txt $en4        =" .kWh($charge_sum)." $after $charging_loss_txt\n";
     printf "$cycles_txt $de1                =  %3d $of_eff_cap_txt\n", round($cycles);
     print "\n";
 }

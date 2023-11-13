@@ -1078,6 +1078,7 @@ my $dis_feed_sum = 0; # grid feed-in via inefficient storage discharge
 
 my $soc_max = $capacity *      $max_soc  if defined $capacity;
 my $soc_min = $capacity * (1 - $max_dod) if defined $capacity;
+my $eff_capacity = $soc_max - $soc_min   if defined $capacity;
 my $soc_max_reached = $soc_min           if defined $capacity;
 my $soc_max_time = $no_time_txt;
 my $max_chgpower = $max_chgrate * $capacity / $charge_eff_never_0
@@ -1768,8 +1769,8 @@ my $charging_loss_txt= $en ? "charging loss"        : "Ladeverlust";
 my $storage_loss_txt = $en ? "storage loss"         : "Speicherverlust";
 my $cycles_txt       = $en ? "full cycles" : "Vollzyklen";
 # Vollzyklen: Kapazitätsdurchgänge, Kapazitätsdurchsatz
-my $of_eff_cap_txt   = $en ? "(of effective capacity)"
-                           :" (der effektiven Kapazität)";
+my $of_eff_cap_txt   = $en ? "of effective capacity"
+                           : "der effektiven Kapazität";
 my $ph               = $en ? "p. hour"              : "je Std";
 my $c_txt            = $en?"average charge power $ph":"Mittlere Ladeleist. $ph";
 my $c_Txt            = $en ? $c_txt               : "Mittlere Ladeleistung $ph";
@@ -1794,6 +1795,8 @@ my $coupl_loss_txt = $AC_coupled ? $AC_coupl_loss_txt : $DC_coupl_loss_txt;
 my $own_ratio = round_percent($PV_sum ? $PV_used_sum / $PV_sum : 1);
 my $load_cover= round_percent($sel_load_sum ? $PV_used_sum / $sel_load_sum : 1);
 my $cycles = 0;
+my $of_eff_cap = sprintf("($of_eff_cap_txt %d Wh)", round($eff_capacity))
+    if defined $capacity;
 if (defined $capacity) { # also for future loss when discharging the rest:
     my $chg_loss_alt = ($charge_eff ? $charge_sum * (1 / $charge_eff - 1) : 1);
     if ($charge_eff) {
@@ -1804,7 +1807,7 @@ if (defined $capacity) { # also for future loss when discharging the rest:
     }
     $storage_loss = $charge_sum * (1 - $storage_eff); # including future dischg
     $cycles = round($dischg_sum / $storage_eff_never_0 / # really storage_eff ?
-                    ($soc_max - $soc_min)) if $capacity != 0;
+                    $eff_capacity) if $eff_capacity != 0;
     if ($DC_coupled) {
         $DC_feed_loss =
             ($PV_used_sum + $grid_feed_sum - $dischg_sum * $inverter2_eff) *
@@ -1867,7 +1870,7 @@ sub save_statistics {
             ."$coupl_loss_txt in kWh,$dis_feed_txt in kWh,"
             .($excl_feed ? "$PV_discarded_txt in kWh," : "")
             ."$own_storage_txt in kWh,$max_soc_txt in Wh $PV_net_max_time,"
-            ."$stored_txt in kWh,$cycles_txt $of_eff_cap_txt\n";
+            ."$stored_txt in kWh,$cycles_txt $of_eff_cap\n";
         print $OU "".round_1000($spill_loss * $inverter_eff).","
             .round_1000($charging_loss).",".round_1000($storage_loss).","
             .round_1000($coupling_loss).",".round_1000($dis_feed_sum).","
@@ -2143,7 +2146,7 @@ if (defined $capacity) {
     printf "$max_soc_txt $en6              =%5d Wh $soc_max_time\n",
         round($soc_max_reached);
     print "$stored_txt $en4        =" .kWh($charge_sum)." $after $charging_loss_txt\n";
-    printf "$cycles_txt $de1                =  %3d $of_eff_cap_txt\n", round($cycles);
+    printf "$cycles_txt $de1                =  %3d $of_eff_cap\n", round($cycles);
     print "\n";
 }
 

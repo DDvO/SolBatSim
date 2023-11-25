@@ -1,0 +1,303 @@
+#!/usr/bin/perl
+
+# Collect status data reported each second by Shelly (Pro) 3EM energy meter.
+# Uses the http://<addr>/status endpoint (yet so far not the MQTT interface).
+# Outputs data in the following files, each of which is optional:
+# * <base_name><energy_name>_<year>.csv energy imported and exported per hour
+# * <base_name><status_name>_<date>.csv status of the three phases per second
+# * <base_name><load_name>_<date>.csv   total load per second, one line per hour
+# * <base_name><log_name>_<year>.txt    info on the data collection per event
+#
+# CLI options:
+# [<base_name> [<energy_name> [<status_name> [<load_name> [<log_name>
+# [<time_zone [<3em_addr> [<3em_username> [<3em_password]]]]]]]]]
+#
+# Alternatively to providing options at the CLI, they may also be given
+# via environment variables, which is advisable for sensitive passwords.
+#
+# By default, the time zone is CET (Central European Time)
+# without the typical adaptations to DST (Daylight Saving Time) twice a year.
+# This prevents misalignment and confusion on the interpretation of timed data
+# and makes sure that the length of the daily output is the same for all days.
+#
+# (c) 2023 David von Oheimb - License: MIT
+
+use strict;
+use warnings;
+#use IO::Null; # using IO::Null->new, print gives: print() on unopened filehandle GLOB
+use IO::Handle; # for flush
+
+my $i = 0;
+my $out_prefix = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_BASENAME}; # e.g., ~/3EM_
+my $out_energy = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_ENERGY};   # per hour
+my $out_stat   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_STATUS};   # per second
+my $out_load   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOAD};     # per second
+my $out_log    = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOG};      # per event
+# time zone for output e.g., "local"
+my $tz = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_TZ} || "CET";
+my $date_format        = "%Y-%m-%d"; # $ENV{Shelly_3EM_OUT_DATE_FORMAT} || ;
+my $time_format        = "%H:%M:%S"; # $ENV{Shelly_3EM_OUT_TIME_FORMAT} || ;
+# my $time_format_hour = "%H:00:00";
+
+my $addr = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR}; # e.g., 192.168.178.123
+my $user = $ARGV[$i++] || $ENV{Shelly_3EM_USER}; # HTTP user name, if needed
+my $pass = $ARGV[$i++] || $ENV{Shelly_3EM_PASS}; # HTTP password, if needed
+
+my $debug = $ENV{Shelly_3EM_DEBUG} // 0;
+
+die "missing CLI argument or env. variable 'Shelly_3EM_ADDR'"   unless $addr;
+die "missing CLI argument or env. variable 'Shelly_3EM_OUT_TZ'" unless $tz;
+die "missing env. variable 'Shelly_3EM_OUT_DATE_FORMAT" unless $date_format;
+
+sub round { return int(($_[0] < 0 ? -.5 : .5) + $_[0]); }
+
+# local system time
+# https://stackoverflow.com/questions/60107110/perl-strftime-localtime-minus-12-hours
+use DateTime;
+sub date_time {
+    return ($_[0]->strftime($date_format), $_[0]->strftime($time_format));
+}
+my $start = DateTime->now(time_zone => $tz);
+my ($date, $time) = date_time($start);
+# $start->add(hours => 1);
+# my $end_time = $start->strftime($time_format_hour);
+# $start->subtract(hours => 1);
+# $end_time = "24:00:00" if $end_time eq "00:00:00";
+
+sub time_epoch { return DateTime->from_epoch(epoch => $_[0], time_zone => $tz);}
+use constant SECONDS_PER_HOUR => 60 * 60;
+# max seconds per day even for days with daylight saving time (DST) adaptation:
+# use constant MAX_SECONDS => (24 + 1) * SECONDS_PER_HOUR;
+my ($count_seconds, $count_gaps) = (0, 0);
+
+sub out_name {
+    my ($name, $period, $ext) = @_;
+    # https://stackoverflow.com/questions/1376607/how-can-i-suppress-stdout-temporarily-in-a-perl-program
+    my $none = File::Spec->devnull(); # sink for no-op output
+    return $name ? $out_prefix.$name."_".$period.$ext : $none;
+}
+
+my ($energy, $EO);
+my ($stat  , $SO);
+my ($load  , $LO);
+my ($log   , $LOG);
+# preliminary log:
+sub log_name { return out_name($out_log, $_[0], ".txt"); }
+$log = log_name($start->strftime("%Y"));
+open($LOG,'>>', $log) || die "cannot open '$log' for appending: $!";
+
+sub log_msg {
+    my $msg = "$date $time: $_[0]\n";
+    print $msg;
+    print $LOG $msg if defined $LOG;
+}
+sub log_warn { log_msg("WARNING: $_[0]"); }
+
+sub do_after_day {
+    print $LO "\n" if defined $LO;
+    close $LO if defined $LO;
+    close $SO if defined $SO;
+}
+
+sub do_after_year {
+    close $EO  if defined $EO;
+    close $LOG if defined $LOG;
+}
+
+sub cleanup() {
+    do_after_day();
+    log_msg("end after $count_seconds seconds, $count_gaps gaps");
+    do_after_year();
+}
+
+# https://stackoverflow.com/questions/77302036/atexit3-in-perl-end-or-sig-die
+$SIG{'__DIE__'} = sub {
+    my $msg = $_[0];
+    log_msg("aborting on fatal error $msg");
+    cleanup();
+    die $msg; # actually die
+};
+$SIG{'INT'} = $SIG{'TERM'} = sub {
+    my $sig = $_[0];
+    log_msg("aborting on signal $sig");
+    cleanup();
+    $SIG{$sig} = 'DEFAULT';
+    kill($sig, $$); # execute default action
+};
+
+# https://stackoverflow.com/questions/19842400/perl-http-post-authentication
+sub http_get {
+    use HTTP::Request::Common;
+    require LWP::UserAgent;
+    my ($url, $user, $pass) = @_;
+    my $ua = new LWP::UserAgent;
+
+    $ua->timeout(1);
+    my $request = GET $url;
+    $request->authorization_basic($user, $pass) if $user;
+    my $response = $ua->request($request);
+    return $response->content;
+}
+
+sub get_line {
+    my ($check_time) = @_;
+
+  retry:
+    my $status = http_get("http://$addr/status", $user, $pass);
+    if ($status =~ m/(Network is unreachable|No route to host|(Connection|Operation) timed out|read timeout|Connection reset by peer)/) {
+        log_warn($1);
+        sleep(5) unless $1 =~ m/timed out|timeout|Connection reset by peer/;
+        goto retry;
+    }
+    unless ($status =~ /\"time\":\"([\d:]+)\",\"unixtime\":(\d+),.*\"emeters\":\[\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)}\,\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\},\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\}\],\"total_power\":([\-\d\.]+),/) {
+        log_warn("error parsing status response '$status'");
+        sleep(1);
+        goto retry;
+    }
+
+    my ($hour, $unixtime,
+        $powerA, $pfA, $currentA, $voltageA, $totalA, $total_returnedA,
+        $powerB, $pfB, $currentB, $voltageB, $totalB, $total_returnedB,
+        $powerC, $pfC, $currentC, $voltageC, $totalC, $total_returnedC,
+        $total_power)
+        = ($1, $2 + 0,
+           $3, $4, $5, $6, $7, $8,
+           $9, $10, $11, $12, $13, $14,
+           $15, $16, $17, $18, $19, $20,
+           $21);
+    my $dataA = "$powerA,$pfA,$currentA,$voltageA,$totalA,$total_returnedA";
+    my $dataB = "$powerB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB";
+    my $dataC = "$powerC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC";
+    my ($date_3em, $time_3em) = date_time(time_epoch($unixtime));
+    my $data = "$dataA,$dataB,$dataC";
+    print "($time, $hour, $unixtime, $time_3em, $data)\n" if $debug;
+
+    if ($check_time) {
+        my $time_hour = substr($time, 0, 5);
+        log_warn("3EM status time '$hour' does not match '$time_hour'")
+            unless $hour eq $time_hour;
+        log_warn("3EM status unixtime '$date_3em"."T$time_3em' ".
+                 "does not match '$date"."T$time'")
+            unless abs($unixtime - $start->epoch) <= 1
+            # 3 seconds diff can happen easily
+    }
+    my $power = $powerA + $powerB + $powerC;
+    log_warn("inconsistent total_power = $total_power ".
+             "vs. $powerA + $powerB + $powerC")
+        unless abs($power - $total_power) <= 0.1;
+    return ($unixtime, $power, $data);
+}
+
+my ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
+my ($prev_power, $prev_timestamp) = (0, -1);
+# my $prev = "";
+
+sub do_before_year {
+    my ($date_3em, $first) = @_;
+    $date_3em =~ m/^(\d+)-(\d\d-\d\d)$/;
+    my $year_3em = $1;
+    return unless $first || $2 eq "01-01";
+
+    $energy = out_name($out_energy, $year_3em, ".csv");
+    $log    = log_name($year_3em);
+    open($LOG,'>>', $log   ) || die "cannot open '$log' for appending: $!";
+    open($EO, '>>', $energy) || die "cannot open '$energy' for appending: $!";
+
+    $LOG->autoflush; # immediately show each line reporting an event
+    $EO ->autoflush; # immediately show each line reporting enery per hour
+    log_msg("start") if $first;
+    # on empty energy output CSV file, add header:
+    print $EO "time [$tz],imported [Wh],exported [Wh]\n" if -z $energy;
+}
+
+sub do_before_day {
+    my ($date_3em, $time_3em, $first) = @_;
+    return unless $first || $time_3em eq "00:00:00";
+
+    do_after_day();
+    do_before_year($date_3em, $first);
+    $stat = out_name($out_stat, $date_3em, ".csv");
+    $load = out_name($out_load, $date_3em, ".csv");
+    open($LO, '>>', $load) || die "cannot open '$load' for appending: $!";
+    open($SO, '>>', $stat  ) || die "cannot open '$stat' for appending: $!";
+
+    print $SO "time [$tz],".
+   "powerA [W],pfA,currentA [A],voltageA [V],totalA [Wh],total_returnedA [Wh],".
+   "powerB [W],pfB,currentB [A],voltageB [V],totalB [Wh],total_returnedB [Wh],".
+   "powerC [W],pfC,currentC [A],voltageC [V],totalC [Wh],total_returnedC [Wh]\n"
+        if -z $stat; # on empty status output CSV file, add header
+    # no header for load output CSV file
+}
+
+sub do_before_hour {
+    my ($date_3em, $time_3em, $first) = @_;
+    return unless $first || $time_3em =~/00:00$/;
+
+    do_before_day($date_3em, $time_3em, $first);
+    print $LO "\n" unless ($first && $LO->eof);
+    print $LO $date_3em."T".$time_3em;
+}
+
+sub do_each_second {
+    my ($timestamp, $power, $data) = @_;
+    my ($date_3em, $time_3em) = date_time(time_epoch($timestamp));
+    my $first = $count_seconds == 0;
+
+    do_before_hour($date_3em, $time_3em, $first);
+
+    ++$count_seconds;
+# https://www.promotic.eu/en/pmdoc/Subsystems/Comm/PmDrivers/IEC62056_OBIS.htm
+# https://de.wikipedia.org/wiki/Stromz%C3%A4hler Zweirichtungszähler für
+# Verbrauch (OBIS-Kennzahl 1.8.0) und Einspeisung (OBIS-Kennzahl 2.8.0)
+    $energy_imported_this_hour += $power
+        if $power > 0; # Positive active energy, energy meter register 1.8.0
+    $energy_exported_this_hour -= $power
+        if $power < 0; # Negative active energy, energy meter register 2.8.0
+    my $power_ = round($power);
+    print $SO "$time_3em,$power_$data\n";
+    print $LO ",$power_";
+
+    if (!$first && $time_3em =~/:59$/) { # end of each minute
+        $SO->flush(); # show status output
+        $LO->flush(); # show load output
+        if ($time_3em =~/59:59$/) { # end of each hour
+            printf $EO "%sT%s,%d,%d\n", $date_3em, $time_3em,
+                round($energy_imported_this_hour / SECONDS_PER_HOUR),
+                round($energy_exported_this_hour / SECONDS_PER_HOUR);
+            ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
+        }
+    }
+}
+
+use Time::HiRes qw(usleep);
+
+do {
+    my $first = $count_seconds == 0;
+    my ($timestamp, $power, $data) = get_line($first);
+    my $diff_seconds = $first ? 1 : $timestamp - $prev_timestamp;
+    if ($diff_seconds == 0) {
+        print "$time: $timestamp (skipping same result)\n" if $debug;
+    } else {
+        print "$time: $timestamp,$power,$data\n" if $debug;
+        if ($diff_seconds > 1) {
+            log_warn("time gap ".++$count_gaps.": $diff_seconds seconds");
+            # linear interpolation of missing time and power
+            my $power_step = ($power - $prev_power) / $diff_seconds;
+            while (--$diff_seconds) {
+                $prev_power += $power_step;
+                do_each_second(++$prev_timestamp, $prev_power, "");
+            }
+        }
+        do_each_second($timestamp, $power, ",$data");
+    }
+
+    $prev_power = $power;
+    $prev_timestamp = $timestamp;
+    # $prev = $time;
+    usleep(500000); # 0.5 secs; each iteration otherwise takes about .2 seconds
+    ($date, $time) = date_time(DateTime->now(time_zone => $tz));
+} while(1);
+# while ($count_seconds < MAX_SECONDS); # stop after 1 day at the latest
+# while $time ge $prev # not yet wrap around at 24:00:00
+#     && $time lt $end_time;
+# cleanup();

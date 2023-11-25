@@ -2,7 +2,7 @@
 #
 ################################################################################
 # Lastprofil-Synthetisierung auf Minuntenbasis
-# Nutzung: Lastprofil.pl Lastprofil-Ausgabe-Datei.csv
+# Nutzung: load_profile.pl Lastprofil-Ausgabe-Datei.csv
 # (c) 2022 David von Oheimb - License: MIT - Version 2.3
 ################################################################################
 

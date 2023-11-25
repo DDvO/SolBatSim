@@ -4,7 +4,7 @@
 # stündlichen Lastprofil, optional mit Begrenzung/Drosselung des Wechselrichters
 # und optional mit Stromspeicher (Batterie o.ä.)
 #
-# Nutzung: Solar.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
+# Nutzung: SolBatSim.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
 #   (<PV-Datei> [direct] [<Nennleistung Wp> [<WR-Eingangsbegrenzung in W>]])+
 #   [-only <*|Jahr[..Jahr]>[-<*|Mon[..Mon]>[-<*|Tag[..Tag]>[:<*|Std[..Std]]]]]
 #   [-dist <relative Lastverteilung über den Tag pro Stunde 0,..,23>
@@ -16,7 +16,7 @@
 #   [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
 #   [-ac | -dc] [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>]
 #   [-pass [spill] <konstante Speicher-Umgehung in W zusätzlich zu 'direct' PV,
-#                   mit 'spill' or AC-Kopplung auch bei vollem Speicher>]
+#                   mit 'spill' oder AC-Kopplung auch bei vollem Speicher>]
 #   [-feed ( lim <Begrenzung der lastoptimierten Entladung aus Speicher in W>
 #         | comp <Einspeiseziel in W bis zu dem der Speicher die PV kompensiert>
 #         | excl <Grenzwert in W zur Speicherentladung statt PV-Nutzung>
@@ -47,7 +47,7 @@
 # mit gegebenen Namen mit Statistik-Daten pro Stunde/Tag/Woche/Monat erzeugt.
 #
 # Beispiel:
-# Solar.pl Lastprofil.csv 3000 Solardaten_1215_kWh.csv 1000 -curb 600 -tmy
+# SolBatSim.pl load_4673_kWh.csv 3000 yield_1274_kWh.csv 1000 -curb 600 -tmy
 #
 # PV-Daten können bezogen werden von https://re.jrc.ec.europa.eu/pvg_tools/de/
 # Wähle den Standort und "DATEN PRO STUNDE", setze Häkchen bei "PV-Leistung".
@@ -61,7 +61,7 @@
 # Optionally takes into account input limit and output crop of solar inverter.
 # Optionally with energy storage (using a battery or the like).
 #
-# Usage: Solar.pl <load profile file> [<consumption per year in kWh>]
+# Usage: SolBatSim.pl <load profile file> [<consumption per year in kWh>]
 #   (<PV file> [direct] [<nominal power in Wp> [<inverter input limit in W]])+
 #   [-only <*|year[..year]>[-<*|mon[..mon]>[-<*|day[..day]>[:<*|hour[..hour]]]]]
 #   [-dist <relative load distribution over each day, per hour 0,..,23>
@@ -103,11 +103,11 @@
 # with the given name containing with statistical data per hour/day/week/month.
 #
 # Example:
-# Solar.pl loadprofile.csv 3000 solardata_1215_kWh.csv 1000 -curb 600 -tmy -en
+# SolBatSim.pl load_4673_kWh.csv 3000 yield_1274_kWh.csv 1000 -curb 600 -tmy -en
 #
 # PV data can be obtained from https://re.jrc.ec.europa.eu/pvg_tools/
 # Select location, click "HOURLY DATA", and set the check mark at "PV power".
-# Optionally may adapt "Installed peak PV power" and "System loss" already here.
+# May adapt "Installed peak PV power" and "System loss" already here.
 # For using TMY data, choose Start year 2008 or earlier, End year 2020 or later.
 # Then press the download button marked "csv".
 #

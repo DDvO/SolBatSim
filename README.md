@@ -16,6 +16,14 @@ Supports various charge/discharge strategies, including suboptimal ones.
 Due to its openness, flexibility, and (depending on input) realistic results,
 may be used as a reference for comparing PV simulations.
 
+Load profiles may be taken from public sources such as [HTW Berlin](
+https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
+or obtained from a suitable local digital metering device.\
+[This Perl script](3em_data_collect.pl) gathers the status data of
+a Shelly (Pro) 3EM energy meter each second and can save it in a file per day.
+It can also produce a load profile with one value per second in another file
+per day, a load profile with the average load per minute a file per year, and
+a record of the energy imported/exported per hour in another file per year.
 
 ## Kurzbeschreibung
 
@@ -37,6 +45,18 @@ ist er auch als Referenz für andere PV-Simulationen verwendbar.
 
 [Hier](https://ddvo.github.io/Solar/#Eigenverbrauch) mehr zum Thema
 Eigenverbrauch mit häuslichen PV-Anlagen und seiner Simulation.
+
+Lastprofile kann man aus öffentlichen Quellen beziehen wie [HTW Berlin](
+https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
+oder mit Hilfe eines geeigneten Messgeräts bzw. Stromzählers selbst gewinnen.\
+[Dieses Perl-Skript](3em_data_collect.pl​) von einem Shelly (Pro) 3EM
+die Status-Daten kontinuierlich im Sekundentakt auslesen und abspeichern:
+* In einer Datei pro Tag
+  je Sekunde alle Statusdaten für die drei Phasen und die saldierte Leistung
+* In einer Datei pro Tag ein Lastprofil mit der saldierten Leistung pro Sekunde
+* In einer Datei pro Jahr ein Lastprofil mit der Durchschnitts-Leistung pro Minute
+* In einer Datei pro Jahr je Stunde (jeweils in Summe über alle drei Phasen)
+  die bezogene (importierte) Energie und eingespeiste (exportierte) Energie
 
 ### Details
 

@@ -4,13 +4,14 @@
 # Uses the http://<addr>/status endpoint (yet so far not the MQTT interface).
 # Outputs data in the following files, each of which is optional:
 # * <base_name><energy_name>_<year>.csv energy imported and exported per hour
+# * <base_name><load_min>_<year>.csv    total load per minute, one line per hour
+# * <base_name><load_sec>_<date>.csv    total load per second, one line per hour
 # * <base_name><status_name>_<date>.csv status of the three phases per second
-# * <base_name><load_name>_<date>.csv   total load per second, one line per hour
 # * <base_name><log_name>_<year>.txt    info on the data collection per event
 #
-# CLI options:
-# [<base_name> [<energy_name> [<status_name> [<load_name> [<log_name>
-# [<time_zone [<3em_addr> [<3em_username> [<3em_password]]]]]]]]]
+# CLI options, each of which may be a value or "" indicating none/default:
+# <base_name> <energy_name> <load_min> <load_sec> <status_name> <log_name>
+# <time_zone> <3em_addr> <3em_username> <3em_password>
 #
 # Alternatively to providing options at the CLI, they may also be given
 # via environment variables, which is advisable for sensitive passwords.
@@ -28,20 +29,23 @@ use warnings;
 use IO::Handle; # for flush
 
 my $i = 0;
-my $out_prefix = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_BASENAME}; # e.g., ~/3EM_
-my $out_energy = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_ENERGY};   # per hour
-my $out_stat   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_STATUS};   # per second
-my $out_load   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOAD};     # per second
-my $out_log    = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOG};      # per event
+my $out_prefix   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_BASENAME}; # e.g., ~/3EM_
+my $out_energy   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_ENERGY};   # per hour
+my $out_load_min = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOAD_MIN}; # per minute
+my $out_load_sec = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOAD_SEC}; # per second
+my $out_stat     = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_STATUS};   # per second
+my $out_log      = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOG};      # per event
+
 # time zone for output e.g., "local"
 my $tz = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_TZ} || "CET";
 my $date_format        = "%Y-%m-%d"; # $ENV{Shelly_3EM_OUT_DATE_FORMAT} || ;
 my $time_format        = "%H:%M:%S"; # $ENV{Shelly_3EM_OUT_TIME_FORMAT} || ;
 # my $time_format_hour = "%H:00:00";
 
-my $addr = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR}; # e.g., 192.168.178.123
+my $addr = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR} || "3em"; # e.g. 192.168.178.123
 my $user = $ARGV[$i++] || $ENV{Shelly_3EM_USER}; # HTTP user name, if needed
 my $pass = $ARGV[$i++] || $ENV{Shelly_3EM_PASS}; # HTTP password, if needed
+my $url  = "http://$addr/status";
 
 my $debug = $ENV{Shelly_3EM_DEBUG} // 0;
 
@@ -65,7 +69,8 @@ my ($date, $time) = date_time($start);
 # $end_time = "24:00:00" if $end_time eq "00:00:00";
 
 sub time_epoch { return DateTime->from_epoch(epoch => $_[0], time_zone => $tz);}
-use constant SECONDS_PER_HOUR => 60 * 60;
+use constant SECONDS_PER_MINUTE => 60;
+use constant SECONDS_PER_HOUR => 60 * SECONDS_PER_MINUTE;
 # max seconds per day even for days with daylight saving time (DST) adaptation:
 # use constant MAX_SECONDS => (24 + 1) * SECONDS_PER_HOUR;
 my ($count_seconds, $count_gaps) = (0, 0);
@@ -78,9 +83,10 @@ sub out_name {
 }
 
 my ($energy, $EO);
-my ($stat  , $SO);
-my ($load  , $LO);
-my ($log   , $LOG);
+my ($load_min, $LM);
+my ($load_sec, $LS);
+my ($status, $SO);
+my ($log, $LOG);
 # preliminary log:
 sub log_name { return out_name($out_log, $_[0], ".txt"); }
 $log = log_name($start->strftime("%Y"));
@@ -94,12 +100,14 @@ sub log_msg {
 sub log_warn { log_msg("WARNING: $_[0]"); }
 
 sub do_after_day {
-    print $LO "\n" if defined $LO;
-    close $LO if defined $LO;
+    print $LS "\n" if defined $LS;
+    close $LS if defined $LS;
     close $SO if defined $SO;
 }
 
 sub do_after_year {
+    print $LM "\n" if defined $LM;
+    close $LM  if defined $LM;
     close $EO  if defined $EO;
     close $LOG if defined $LOG;
 }
@@ -143,14 +151,14 @@ sub get_line {
     my ($check_time) = @_;
 
   retry:
-    my $status = http_get("http://$addr/status", $user, $pass);
-    if ($status =~ m/(Network is unreachable|No route to host|(Connection|Operation) timed out|read timeout|Connection reset by peer)/) {
+    my $status_json = http_get($url, $user, $pass);
+    if ($status_json =~ m/(Network is unreachable|No route to host|(Connection|Operation) timed out|read timeout|Connection reset by peer)/) {
         log_warn($1);
         sleep(5) unless $1 =~ m/timed out|timeout|Connection reset by peer/;
         goto retry;
     }
-    unless ($status =~ /\"time\":\"([\d:]+)\",\"unixtime\":(\d+),.*\"emeters\":\[\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)}\,\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\},\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\}\],\"total_power\":([\-\d\.]+),/) {
-        log_warn("error parsing status response '$status'");
+    unless ($status_json =~ /\"time\":\"([\d:]+)\",\"unixtime\":(\d+),.*\"emeters\":\[\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)}\,\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\},\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\}\],\"total_power\":([\-\d\.]+),/) {
+        log_warn("error parsing status response '$status_json'");
         sleep(1);
         goto retry;
     }
@@ -189,6 +197,7 @@ sub get_line {
 }
 
 my ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
+my $power_sum_minute = 0;
 my ($prev_power, $prev_timestamp) = (0, -1);
 # my $prev = "";
 
@@ -198,16 +207,20 @@ sub do_before_year {
     my $year_3em = $1;
     return unless $first || $2 eq "01-01";
 
+    $load_min = out_name($out_load_min, $year_3em, ".csv");
     $energy = out_name($out_energy, $year_3em, ".csv");
     $log    = log_name($year_3em);
-    open($LOG,'>>', $log   ) || die "cannot open '$log' for appending: $!";
+    open($LOG, '>>', $log  ) || die "cannot open '$log' for appending: $!";
     open($EO, '>>', $energy) || die "cannot open '$energy' for appending: $!";
+    open($LM,'>>',$load_min) || die "cannot open '$load_min' for appending: $!";
 
     $LOG->autoflush; # immediately show each line reporting an event
-    $EO ->autoflush; # immediately show each line reporting enery per hour
-    log_msg("start") if $first;
+    $EO ->autoflush; # immediately show each line reporting energy per hour
+    $LM ->autoflush; # immediately show each load per minute
+    log_msg("start - will connect to $url") if $first;
     # on empty energy output CSV file, add header:
     print $EO "time [$tz],imported [Wh],exported [Wh]\n" if -z $energy;
+    # no header for load output CSV file
 }
 
 sub do_before_day {
@@ -216,16 +229,16 @@ sub do_before_day {
 
     do_after_day();
     do_before_year($date_3em, $first);
-    $stat = out_name($out_stat, $date_3em, ".csv");
-    $load = out_name($out_load, $date_3em, ".csv");
-    open($LO, '>>', $load) || die "cannot open '$load' for appending: $!";
-    open($SO, '>>', $stat  ) || die "cannot open '$stat' for appending: $!";
+    $load_sec = out_name($out_load_sec, $date_3em, ".csv");
+    $status = out_name($out_stat, $date_3em, ".csv");
+    open($LS,'>>',$load_sec) || die "cannot open '$load_sec' for appending: $!";
+    open($SO, '>>', $status) || die "cannot open '$status' for appending: $!";
 
-    print $SO "time [$tz],".
+    print $SO "time [$tz],total_power,".
    "powerA [W],pfA,currentA [A],voltageA [V],totalA [Wh],total_returnedA [Wh],".
    "powerB [W],pfB,currentB [A],voltageB [V],totalB [Wh],total_returnedB [Wh],".
    "powerC [W],pfC,currentC [A],voltageC [V],totalC [Wh],total_returnedC [Wh]\n"
-        if -z $stat; # on empty status output CSV file, add header
+        if -z $status; # on empty status output CSV file, add header
     # no header for load output CSV file
 }
 
@@ -234,8 +247,11 @@ sub do_before_hour {
     return unless $first || $time_3em =~/00:00$/;
 
     do_before_day($date_3em, $time_3em, $first);
-    print $LO "\n" unless ($first && $LO->eof);
-    print $LO $date_3em."T".$time_3em;
+    print $LM "\n" unless ($first && -z $load_min);
+    print $LS "\n" unless ($first && -z $load_sec);
+    my $date_time = $date_3em."T".$time_3em;
+    print $LM $date_time;
+    print $LS $date_time;
 }
 
 sub do_each_second {
@@ -246,6 +262,7 @@ sub do_each_second {
     do_before_hour($date_3em, $time_3em, $first);
 
     ++$count_seconds;
+    $power_sum_minute += $power;
 # https://www.promotic.eu/en/pmdoc/Subsystems/Comm/PmDrivers/IEC62056_OBIS.htm
 # https://de.wikipedia.org/wiki/Stromz%C3%A4hler Zweirichtungszähler für
 # Verbrauch (OBIS-Kennzahl 1.8.0) und Einspeisung (OBIS-Kennzahl 2.8.0)
@@ -254,13 +271,19 @@ sub do_each_second {
     $energy_exported_this_hour -= $power
         if $power < 0; # Negative active energy, energy meter register 2.8.0
     my $power_ = round($power);
+    print $LS ",$power_";
     print $SO "$time_3em,$power_$data\n";
-    print $LO ",$power_";
 
     if (!$first && $time_3em =~/:59$/) { # end of each minute
-        $SO->flush(); # show status output
-        $LO->flush(); # show load output
-        if ($time_3em =~/59:59$/) { # end of each hour
+        print $LM ",".round($power_sum_minute / SECONDS_PER_MINUTE);
+        $power_sum_minute = 0;
+        # make load and status output visible
+        $LM->flush();
+        $LS->flush();
+        $SO->flush();
+
+        # at end of each hour, calculate total imported/exported energy
+        if ($time_3em =~/59:59$/) {
             printf $EO "%sT%s,%d,%d\n", $date_3em, $time_3em,
                 round($energy_imported_this_hour / SECONDS_PER_HOUR),
                 round($energy_exported_this_hour / SECONDS_PER_HOUR);

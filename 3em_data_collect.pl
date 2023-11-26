@@ -147,6 +147,7 @@ sub http_get {
     return $response->content;
 }
 
+my $last_valid_unixtime = 0;
 sub get_line {
     my ($check_time) = @_;
 
@@ -157,8 +158,8 @@ sub get_line {
         sleep(5) unless $1 =~ m/timed out|timeout|Connection reset by peer/;
         goto retry;
     }
-    unless ($status_json =~ /\"time\":\"([\d:]+)\",\"unixtime\":(\d+),.*\"emeters\":\[\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)}\,\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\},\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\}\],\"total_power\":([\-\d\.]+),/) {
-        log_warn("error parsing status response '$status_json'");
+    unless ($status_json =~ /\"time\":\"([\d:]*)\",\"unixtime\":(\d+),.*\"emeters\":\[\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)}\,\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\},\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\}\],\"total_power\":([\-\d\.]+),.*,\"uptime\":(\d+)/) {
+        log_warn("error parsing 3EM status response '$status_json'");
         sleep(1);
         goto retry;
     }
@@ -167,15 +168,28 @@ sub get_line {
         $powerA, $pfA, $currentA, $voltageA, $totalA, $total_returnedA,
         $powerB, $pfB, $currentB, $voltageB, $totalB, $total_returnedB,
         $powerC, $pfC, $currentC, $voltageC, $totalC, $total_returnedC,
-        $total_power)
+        $total_power, $uptime)
         = ($1, $2 + 0,
            $3, $4, $5, $6, $7, $8,
            $9, $10, $11, $12, $13, $14,
            $15, $16, $17, $18, $19, $20,
-           $21);
+           $21, $22);
     my $dataA = "$powerA,$pfA,$currentA,$voltageA,$totalA,$total_returnedA";
     my $dataB = "$powerB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB";
     my $dataC = "$powerC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC";
+    if ($unixtime) {
+        $last_valid_unixtime = $unixtime;
+    } else {
+        if ($last_valid_unixtime) {
+            log_warn("approximating missing 3EM status unixtime from last valid"
+                     ." one $last_valid_unixtime + uptime $uptime");
+            $unixtime = $last_valid_unixtime + $uptime;
+        } else {
+            log_warn("missing 3EM status unixtime, discarding '$status_json'");
+            sleep(1);
+            goto retry;
+        }
+    }
     my ($date_3em, $time_3em) = date_time(time_epoch($unixtime));
     my $data = "$dataA,$dataB,$dataC";
     print "($time, $hour, $unixtime, $time_3em, $data)\n" if $debug;
@@ -310,6 +324,8 @@ do {
                 $prev_power += $power_step;
                 do_each_second(++$prev_timestamp, $prev_power, "");
             }
+        } elsif ($diff_seconds < 0) {
+            log_warn("negative 3EM status unixtime difference $diff_seconds");
         }
         do_each_second($timestamp, $power, ",$data");
     }

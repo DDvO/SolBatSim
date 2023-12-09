@@ -261,8 +261,8 @@ sub do_before_hour {
     return unless $first || $time_3em =~/00:00$/;
 
     do_before_day($date_3em, $time_3em, $first);
-    print $LM "\n" unless ($first && -z $load_min);
-    print $LS "\n" unless ($first && -z $load_sec);
+    print $LM "\n" unless ($first || -z $load_min);
+    print $LS "\n" unless ($first || -z $load_sec);
     my $date_time = $date_3em."T".$time_3em;
     print $LM $date_time;
     print $LS $date_time;

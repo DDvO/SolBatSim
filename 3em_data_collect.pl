@@ -153,13 +153,20 @@ sub get_line {
 
   retry:
     my $status_json = http_get($url, $user, $pass);
-    if ($status_json =~ m/(Network is unreachable|No route to host|(Connection|Operation) timed out|read timeout|Connection reset by peer)/) {
+    if ($status_json =~ m/(Network is unreachable|No route to host|Can't connect|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
         log_warn($1);
-        sleep(5) unless $1 =~ m/timed out|timeout|Connection reset by peer/;
+        # 'timed out' can be misleading: also occurs on router down without having waited
+        sleep(5) unless $1 =~ m/Connection reset by peer/;
         goto retry;
     }
     unless ($status_json =~ /\"time\":\"([\d:]*)\",\"unixtime\":(\d+),.*\"emeters\":\[\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)}\,\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\},\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\}\],\"total_power\":([\-\d\.]+),.*,\"uptime\":(\d+)/) {
-        log_warn("error parsing 3EM status response '$status_json'");
+        if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
+            # e.g.: The requested URL could not be retrieved
+            log_warn("skipping error response: $1"); # e.g., by Squid
+        } else {
+            my $shown = substr($status_json, 0, 1100); # typically ~1020 chars
+            log_warn("error parsing 3EM status response '$shown'");
+        }
         sleep(1);
         goto retry;
     }

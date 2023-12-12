@@ -38,9 +38,12 @@ my $out_log      = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOG};      # per event
 
 # time zone for output e.g., "local"
 my $tz = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_TZ} || "CET";
-my $date_format        = "%Y-%m-%d"; # $ENV{Shelly_3EM_OUT_DATE_FORMAT} || ;
-my $time_format        = "%H:%M:%S"; # $ENV{Shelly_3EM_OUT_TIME_FORMAT} || ;
-# my $time_format_hour = "%H:00:00";
+my $date_format        = "%Y-%m-%d";
+my $date_format_out    = $ENV{Shelly_3EM_OUT_DATE_FORMAT} || $date_format;
+my $date_time_sep      = "T";
+my $date_time_sep_out  = $ENV{Shelly_3EM_OUT_DATE_TIME_SEP} || $date_time_sep;
+my $time_format        = "%H:%M:%S";
+my $time_format_out    = $ENV{Shelly_3EM_OUT_TIME_FORMAT} || $time_format;
 
 my $addr = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR} || "3em"; # e.g. 192.168.178.123
 my $user = $ARGV[$i++] || $ENV{Shelly_3EM_USER}; # HTTP user name, if needed
@@ -51,7 +54,6 @@ my $debug = $ENV{Shelly_3EM_DEBUG} // 0;
 
 die "missing CLI argument or env. variable 'Shelly_3EM_ADDR'"   unless $addr;
 die "missing CLI argument or env. variable 'Shelly_3EM_OUT_TZ'" unless $tz;
-die "missing env. variable 'Shelly_3EM_OUT_DATE_FORMAT" unless $date_format;
 
 sub round { return int(($_[0] < 0 ? -.5 : .5) + $_[0]); }
 
@@ -59,11 +61,17 @@ sub round { return int(($_[0] < 0 ? -.5 : .5) + $_[0]); }
 # https://stackoverflow.com/questions/60107110/perl-strftime-localtime-minus-12-hours
 use DateTime;
 sub date_time {
-    return ($_[0]->strftime($date_format), $_[0]->strftime($time_format));
+    return ($_[0]->strftime($date_format),
+            $_[0]->strftime($time_format));
+}
+sub date_time_out {
+    return ($_[0]->strftime($date_format_out),
+            $_[0]->strftime($time_format_out));
 }
 my $start = DateTime->now(time_zone => $tz);
 my ($date, $time) = date_time($start);
 # $start->add(hours => 1);
+# my $time_format_hour = "%H:00:00";
 # my $end_time = $start->strftime($time_format_hour);
 # $start->subtract(hours => 1);
 # $end_time = "24:00:00" if $end_time eq "00:00:00";
@@ -205,8 +213,8 @@ sub get_line {
         my $time_hour = substr($time, 0, 5);
         log_warn("3EM status time '$hour' does not match '$time_hour'")
             unless $hour eq $time_hour;
-        log_warn("3EM status unixtime '$date_3em"."T$time_3em' ".
-                 "does not match '$date"."T$time'")
+        log_warn("3EM status unixtime '$date_3em"."$date_time_sep$time_3em' ".
+                 "does not closely match '$date"."$date_time_sep$time'")
             unless abs($unixtime - $start->epoch) <= 1
             # 3 seconds diff can happen easily
     }
@@ -224,7 +232,7 @@ my ($prev_power, $prev_timestamp) = (0, -1);
 
 sub do_before_year {
     my ($date_3em, $first) = @_;
-    $date_3em =~ m/^(\d+)-(\d\d-\d\d)$/;
+    die "error matching time" unless $date_3em =~ m/^(\d+)-(\d\d-\d\d)$/;
     my $year_3em = $1;
     return unless $first || $2 eq "01-01";
 
@@ -245,13 +253,13 @@ sub do_before_year {
 }
 
 sub do_before_day {
-    my ($date_3em, $time_3em, $first) = @_;
+    my ($date_3em, $time_3em, $date_3em_out, $time_3em_out, $first) = @_;
     return unless $first || $time_3em eq "00:00:00";
 
     do_after_day();
     do_before_year($date_3em, $first);
-    $load_sec = out_name($out_load_sec, $date_3em, ".csv");
-    $status = out_name($out_stat, $date_3em, ".csv");
+    $load_sec = out_name($out_load_sec, $date_3em_out, ".csv");
+    $status = out_name($out_stat, $date_3em_out, ".csv");
     open($LS,'>>',$load_sec) || die "cannot open '$load_sec' for appending: $!";
     open($SO, '>>', $status) || die "cannot open '$status' for appending: $!";
 
@@ -264,23 +272,27 @@ sub do_before_day {
 }
 
 sub do_before_hour {
-    my ($date_3em, $time_3em, $first) = @_;
-    return unless $first || $time_3em =~/00:00$/;
+    my ($date_3em, $time_3em, $date_3em_out, $time_3em_out, $first) = @_;
+    die "error matching time" unless $time_3em =~ m/^(\d\d):(\d\d:\d\d)$/;
+    my ($hour_3em, $min_sec_3em) = ($1, $2);
+    return unless $first || $min_sec_3em eq "00:00";
 
-    do_before_day($date_3em, $time_3em, $first);
+    do_before_day($date_3em, $time_3em, $date_3em_out, $time_3em_out, $first);
     print $LM "\n" unless ($first || -z $load_min);
     print $LS "\n" unless ($first || -z $load_sec);
-    my $date_time = $date_3em."T".$time_3em;
-    print $LM $date_time;
-    print $LS $date_time;
+    my $date_time_out = $date_3em_out.$date_time_sep_out.$time_3em_out; # $hour_3em
+    print $LM $date_time_out;
+    print $LS $date_time_out;
 }
 
 sub do_each_second {
     my ($timestamp, $power, $data) = @_;
-    my ($date_3em, $time_3em) = date_time(time_epoch($timestamp));
+    my $time = time_epoch($timestamp);
+    my ($date_3em    , $time_3em    ) = date_time($time);
+    my ($date_3em_out, $time_3em_out) = date_time_out($time);
     my $first = $count_seconds == 0;
 
-    do_before_hour($date_3em, $time_3em, $first);
+    do_before_hour($date_3em, $time_3em, $date_3em_out, $time_3em_out, $first);
 
     ++$count_seconds;
     $power_sum_minute += $power;
@@ -293,7 +305,7 @@ sub do_each_second {
         if $power < 0; # Negative active energy, energy meter register 2.8.0
     my $power_ = round($power);
     print $LS ",$power_";
-    print $SO "$time_3em,$power_$data\n";
+    print $SO "$time_3em_out,$power_$data\n";
 
     if (!$first && $time_3em =~/:59$/) { # end of each minute
         print $LM ",".round($power_sum_minute / SECONDS_PER_MINUTE);
@@ -305,7 +317,7 @@ sub do_each_second {
 
         # at end of each hour, calculate total imported/exported energy
         if ($time_3em =~/59:59$/) {
-            printf $EO "%sT%s,%d,%d\n", $date_3em, $time_3em,
+            printf $EO "$date_3em_out$date_time_sep_out$time_3em_out,%d,%d\n",
                 round($energy_imported_this_hour / SECONDS_PER_HOUR),
                 round($energy_exported_this_hour / SECONDS_PER_HOUR);
             ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);

@@ -26,6 +26,8 @@ It can also produce another file per day with the total power values per second,
 a file per year with the average total power per minute, and another file per
 year with a record per hour of the imported energy and exported energy: the
 accumulated positive/negative per-second total power values over the given hour.
+The script is robust against intermittently missing power data by interpolating
+the data over the range of seconds where no power measurement is available.
 
 ## Kurzbeschreibung
 
@@ -63,6 +65,10 @@ und abspeichern:
 * In einer Datei pro Jahr je Stunde die bezogene (importierte) Energie und
   eingespeiste (exportierte) Energie, die sich durch Akkumulation der positiven
   bzw. negativen saldierten Leistungswerte je Sekunde über die Stunde ergibt.
+
+Das Skript ist robust gegen zeitweise fehlende Leistungs-Daten, z.B. wegen
+hängender Verbindung zum Energiemessgerät oder zeitweisem Ausfall in seiner
+Ausführung, indem es die Messdaten über die ausgefallenen Sekunden interpoliert.
 
 ### Details
 

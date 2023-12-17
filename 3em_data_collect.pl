@@ -8,6 +8,8 @@
 # * <base_name><load_sec>_<date>.csv    total load per second, one line per hour
 # * <base_name><status_name>_<date>.csv status of the three phases per second
 # * <base_name><log_name>_<year>.txt    info on the data collection per event
+# The script is robust w.r.t. intermittently missing power data by interpolating
+# the data over the range of seconds where no power measurement is available.
 #
 # CLI options, each of which may be a value or "" indicating none/default:
 # <base_name> <energy_name> <load_min> <load_sec> <status_name> <log_name>

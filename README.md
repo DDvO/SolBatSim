@@ -20,10 +20,12 @@ Load profiles may be taken from public sources such as [HTW Berlin](
 https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
 or obtained from a suitable local digital metering device.\
 [This Perl script](3em_data_collect.pl) gathers the status data of
-a Shelly (Pro) 3EM energy meter each second and can save it in a file per day.
-It can also produce a load profile with one value per second in another file
-per day, a load profile with the average load per minute a file per year, and
-a record of the energy imported/exported per hour in another file per year.
+a Shelly (Pro) 3EM energy meter each second and can save it in a file per day,
+including a total power value obtained by adding the values of the three phases.
+It can also produce another file per day with the total power values per second,
+a file per year with the average total power per minute, and another file per
+year with a record per hour of the imported energy and exported energy: the
+accumulated positive/negative per-second total power values over the given hour.
 
 ## Kurzbeschreibung
 
@@ -49,14 +51,18 @@ Eigenverbrauch mit häuslichen PV-Anlagen und seiner Simulation.
 Lastprofile kann man aus öffentlichen Quellen beziehen wie [HTW Berlin](
 https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
 oder mit Hilfe eines geeigneten Messgeräts bzw. Stromzählers selbst gewinnen.\
-[Dieses Perl-Skript](3em_data_collect.pl​) von einem Shelly (Pro) 3EM
-die Status-Daten kontinuierlich im Sekundentakt auslesen und abspeichern:
+[Dieses Perl-Skript](3em_data_collect.pl​) von einem Energiemessgerät
+Shelly (Pro) 3EM die Status-Daten kontinuierlich im Sekundentakt auslesen
+und abspeichern:
 * In einer Datei pro Tag
-  je Sekunde alle Statusdaten für die drei Phasen und die saldierte Leistung
-* In einer Datei pro Tag ein Lastprofil mit der saldierten Leistung pro Sekunde
-* In einer Datei pro Jahr ein Lastprofil mit der Durchschnitts-Leistung pro Minute
-* In einer Datei pro Jahr je Stunde (jeweils in Summe über alle drei Phasen)
-  die bezogene (importierte) Energie und eingespeiste (exportierte) Energie
+  je Sekunde alle Statusdaten für die drei Phasen und die saldierte Leistung,
+  also die Summe der Leistungswerte über alle drei Phasen.
+* In einer Datei pro Tag ein Lastprofil mit der saldierten Leistung je Sekunde
+* In einer Datei pro Jahr ein Lastprofil mit einem Eintrag je Minute.
+  mit dem Durchschnitt der saldierten Leistungswerte über die Minute
+* In einer Datei pro Jahr je Stunde die bezogene (importierte) Energie und
+  eingespeiste (exportierte) Energie, die sich durch Akkumulation der positiven
+  bzw. negativen saldierten Leistungswerte je Sekunde über die Stunde ergibt.
 
 ### Details
 
@@ -110,11 +116,12 @@ Parameter sind die Brutto-Kapazität, die maximale Lade- und Entladetiefe,
 die maximale Lade- und Entladerate (Leistung als Vielfaches der Kapazität/h),
 die angenommenen Wirkungsgrade der Ladung und Speicherung, sowie optional
 der Wirkungsgrad des für die Entladung verwendeten Wechselrichters.
+
 Zudem kann aus folgenden [hier](https://Solar.DavOh.de/#Regelungsstrategien)
 näher behandelten Lade- und Entladestrategien gewählt werden:
 - Ladestrategie (solange die definierte Maximalladung nicht erreicht ist):
-  - Lastvorrang (optimal): Speicherung der nicht anderweitig gebrauchten
-    PV-Energie -- im Zusammenhang mit E-Fahrzeugen *Überschussladung* genannt
+  - Lastvorrang, auch *Überschussladung* genannt (optimal):
+    Speicherung der aktuell nicht anderweitig gebrauchten PV-Energie
   - vorrangige Speicherung (ohne Berücksichtigung der Last),
     wobei wahlweise Strom auch teils am Speicher vorbei geleitet werden kann:
     - für Überschuss, der nicht mehr in den Speicher passt, und/oder

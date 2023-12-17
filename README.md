@@ -28,6 +28,11 @@ year with a record per hour of the imported energy and exported energy: the
 accumulated positive/negative per-second total power values over the given hour.
 The script is robust against intermittently missing power data by interpolating
 the data over the range of seconds where no power measurement is available.
+In order to cope with inadvertent abortion of script execution (e.g., due to
+system reboot), the script should be started automatically when not currently
+running, for instance using a Linux cron job that is triggered each minute.
+It can recover the per-minute and per-hour data accumulation for the current day
+if the file with the total power values per second has been produced.
 
 ## Kurzbeschreibung
 
@@ -69,6 +74,12 @@ und abspeichern:
 Das Skript ist robust gegen zeitweise fehlende Leistungs-Daten, z.B. wegen
 hängender Verbindung zum Energiemessgerät oder zeitweisem Ausfall in seiner
 Ausführung, indem es die Messdaten über die ausgefallenen Sekunden interpoliert.
+Damit nach Abbrüchen der Skript-Ausführung z.B. durch System-Neustarts das
+Skript wieder automatisch weiter laufen kann, sollte es z.B. über einen Linux
+cron job o.ä. jede Minute neu gestartet werden, sofern es aktuell nicht läuft.
+Wenn für den aktuellen Tag die Lastprofil-Datei mit der saldierten Leistung je
+Sekunde produziert wurde, kann es basierend auf dessen Inhalt die Akkumulation
+minütlicher und stündlicher Durchschnittsleistungs- und Energiedaten fortsetzen.
 
 ### Details
 
@@ -280,5 +291,5 @@ Local IspellDict: german8
 LocalWords: pl load csv yield direct only Mon dist ac debug em mon stat
 LocalWords: bend avg hour verbose peff dc capacity spill feed min en
 LocalWords: lim comp excl charge discharge ceff seff ieff test tmy
-LocalWords:  data collect curb day week month season
+LocalWords:  data collect curb day week month season cron job
 -->

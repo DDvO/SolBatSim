@@ -10,6 +10,11 @@
 # * <base_name><log_name>_<year>.txt    info on the data collection per event
 # The script is robust w.r.t. intermittently missing power data by interpolating
 # the data over the range of seconds where no power measurement is available.
+# In order to cope with inadvertent abortion of script execution (e.g., due to
+# system reboot), the script should be started automatically when not currently
+# running, for instance using a Linux cron job that is triggered each minute.
+# It can recover the per-minute and per-hour data accumulation for the current
+# day if the file with the total power values per second has been produced.
 #
 # CLI options, each of which may be a value or "" indicating none/default:
 # <base_name> <energy_name> <load_min> <load_sec> <status_name> <log_name>
@@ -78,6 +83,16 @@ my ($date, $time) = date_time($start);
 # $start->subtract(hours => 1);
 # $end_time = "24:00:00" if $end_time eq "00:00:00";
 
+# https://stackoverflow.com/questions/7486470/how-to-parse-a-string-into-a-datetime-object-in-perl
+sub parse_datetime {
+    use DateTime::Format::Strptime;
+    my $time_parser = DateTime::Format::Strptime->new(
+        pattern => $date_format_out.$date_time_sep_out.$time_format_out.' %Z',
+        on_error => 'croak',
+        );
+    return $time_parser->parse_datetime("$_[0] $tz");
+}
+
 sub time_epoch { return DateTime->from_epoch(epoch => $_[0], time_zone => $tz);}
 use constant SECONDS_PER_MINUTE => 60;
 use constant SECONDS_PER_HOUR => 60 * SECONDS_PER_MINUTE;
@@ -110,13 +125,11 @@ sub log_msg {
 sub log_warn { log_msg("WARNING: $_[0]"); }
 
 sub do_after_day {
-    print $LS "\n" if defined $LS;
     close $LS if defined $LS;
     close $SO if defined $SO;
 }
 
 sub do_after_year {
-    print $LM "\n" if defined $LM;
     close $LM  if defined $LM;
     close $EO  if defined $EO;
     close $LOG if defined $LOG;
@@ -229,15 +242,67 @@ sub get_line {
 
 my ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
 my $power_sum_minute = 0;
-my ($prev_power, $prev_timestamp) = (0, -1);
+my ($prev_power, $prev_timestamp) = (0, 0);
 # my $prev = "";
+
+# try recover data from any previous run
+# TODO maybe add recovery also for $out_load_min or $out_stat
+my $cannot_recover = "cannot recover earlier data for the current hour";
+if ($out_load_sec) {
+    my $load_sec = out_name($out_load_sec, $date, ".csv");
+    if (open(my $LS, '<' ,$load_sec)) {
+        my $prev_second = 0;
+        my $line;
+        while (<$LS>) {
+            $line = $_;
+        }
+        close $LS;
+        die "empty high-resolution load file '$load_sec'" unless defined $line;
+        chomp $line;
+        my @elems = (split ",", $line);
+        my $n = $#elems;
+        die "cannot parse last line '$line' of high-resolution load file '$load_sec'"
+            if $n < 0;
+        my $date_time = $elems[0];
+        my $dt = parse_datetime($date_time);
+        die "cannot parse date+time '$date_time' in last line of high-resolution load file '$load_sec'"
+            unless $dt;
+        $prev_timestamp = $dt->epoch;
+        my ($minute, $second) = ($dt->minute, $dt->second);
+        for (my $i = 1; $i <= $n; $i++) {
+            $prev_power = $elems[$i];
+            die "cannot parse power value '$prev_power' in last line of high-resolution load file '$load_sec'"
+                unless $prev_power =~ m/^-?\d+$/;
+            $power_sum_minute += $prev_power;
+            if ($prev_power > 0) {
+                $energy_imported_this_hour += $prev_power;
+            } else {
+                $energy_exported_this_hour -= $prev_power;
+            }
+            if (++$second >= 60) {
+                $second = 0;
+                $minute++;
+                die "too many power values in last line '$line' of high-resolution load file '$load_sec'"
+                    if $minute >= 60;
+                $power_sum_minute = 0;
+            }
+        }
+        $prev_timestamp += $n;
+    } else {
+        log_warn("no previouly produced high-resolution load file '$load_sec' found, so $cannot_recover");
+    }
+} else {
+    log_warn("as no high-resolution load file <load_sec> is defined, $cannot_recover");
+}
 
 sub do_before_year {
     my ($date_3em, $first) = @_;
     die "error matching time" unless $date_3em =~ m/^(\d+)-(\d\d-\d\d)$/;
-    my $year_3em = $1;
-    return unless $first || $2 eq "01-01";
+    my ($year_3em, $month_day_3em) = ($1, $2);
+    return unless $first || $month_day_3em eq "01-01";
 
+    print $LM "\n" if defined $LM && !($first && $prev_timestamp);
+    do_after_year();
     $load_min = out_name($out_load_min, $year_3em, ".csv");
     $energy = out_name($out_energy, $year_3em, ".csv");
     $log    = log_name($year_3em);
@@ -258,6 +323,7 @@ sub do_before_day {
     my ($date_3em, $time_3em, $date_3em_out, $time_3em_out, $first) = @_;
     return unless $first || $time_3em eq "00:00:00";
 
+    print $LS "\n" if defined $LS && !($first && $prev_timestamp);;
     do_after_day();
     do_before_year($date_3em, $first);
     $load_sec = out_name($out_load_sec, $date_3em_out, ".csv");
@@ -280,6 +346,8 @@ sub do_before_hour {
     return unless $first || $min_sec_3em eq "00:00";
 
     do_before_day($date_3em, $time_3em, $date_3em_out, $time_3em_out, $first);
+
+    return if $first && $prev_timestamp;
     print $LM "\n" unless ($first || -z $load_min);
     print $LS "\n" unless ($first || -z $load_sec);
     my $date_time_out = $date_3em_out.$date_time_sep_out.$time_3em_out; # $hour_3em
@@ -329,10 +397,12 @@ sub do_each_second {
 
 use Time::HiRes qw(usleep);
 
+# re-calculate due to potenital delays recovering data from any previous run:
+$start = DateTime->now(time_zone => $tz);
 do {
     my $first = $count_seconds == 0;
     my ($timestamp, $power, $data) = get_line($first);
-    my $diff_seconds = $first ? 1 : $timestamp - $prev_timestamp;
+    my $diff_seconds = $prev_timestamp ? $timestamp - $prev_timestamp : 1;
     if ($diff_seconds == 0) {
         print "$time: $timestamp (skipping same result)\n" if $debug;
     } else {

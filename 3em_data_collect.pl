@@ -40,7 +40,7 @@ my $out_log      = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOG};      # per event
 my $tz = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_TZ} || "CET";
 my $date_format        = "%Y-%m-%d";
 my $date_format_out    = $ENV{Shelly_3EM_OUT_DATE_FORMAT} || $date_format;
-my $date_time_sep      = "T";
+my $date_time_sep      = " "; # "T";
 my $date_time_sep_out  = $ENV{Shelly_3EM_OUT_DATE_TIME_SEP} || $date_time_sep;
 my $time_format        = "%H:%M:%S";
 my $time_format_out    = $ENV{Shelly_3EM_OUT_TIME_FORMAT} || $time_format;
@@ -129,7 +129,7 @@ sub cleanup() {
 # https://stackoverflow.com/questions/77302036/atexit3-in-perl-end-or-sig-die
 $SIG{'__DIE__'} = sub {
     my $msg = $_[0];
-    log_msg("aborting on fatal error $msg");
+    log_msg("aborting on fatal error: $msg");
     cleanup();
     die $msg; # actually die
 };
@@ -211,7 +211,7 @@ sub get_line {
 
     if ($check_time) {
         my $time_hour = substr($time, 0, 5);
-        log_warn("3EM status time '$hour' does not match '$time_hour'")
+        log_warn("3EM status time '$hour' does not equal '$time_hour'")
             unless $hour eq $time_hour;
         log_warn("3EM status unixtime '$date_3em"."$date_time_sep$time_3em' ".
                  "does not closely match '$date"."$date_time_sep$time'")
@@ -344,7 +344,7 @@ do {
                 do_each_second(++$prev_timestamp, $prev_power, "");
             }
         } elsif ($diff_seconds < 0) {
-            log_warn("negative 3EM status unixtime difference $diff_seconds");
+            log_warn("negative 3EM status unixtime difference: $diff_seconds");
         }
         do_each_second($timestamp, $power, ",$data");
     }

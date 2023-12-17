@@ -415,10 +415,13 @@ do {
                 $prev_power += $power_step;
                 do_each_second(++$prev_timestamp, $prev_power, "");
             }
-        } elsif ($diff_seconds < 0) {
-            log_warn("negative 3EM status unixtime difference: $diff_seconds");
         }
-        do_each_second($timestamp, $power, ",$data");
+        if ($diff_seconds < 0) {
+            log_warn("skipping status entry due to negative 3EM unixtime difference: $diff_seconds");
+            $timestamp = $prev_timestamp;
+        } else {
+            do_each_second($timestamp, $power, ",$data");
+        }
     }
 
     $prev_power = $power;

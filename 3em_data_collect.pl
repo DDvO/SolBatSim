@@ -428,7 +428,7 @@ do {
     $prev_power = $power;
     $prev_timestamp = $timestamp;
     # $prev = $time;
-    usleep(500000); # 0.5 secs; each iteration otherwise takes about .2 seconds
+    usleep(700000); # 0.7 secs; each iteration otherwise takes about .2 seconds
     ($date, $time) = date_time_now();
 } while(1);
 # while ($count_seconds < MAX_SECONDS); # stop after 1 day at the latest

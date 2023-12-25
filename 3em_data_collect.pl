@@ -71,6 +71,7 @@ sub date_time {
     return ($_[0]->strftime($date_format),
             $_[0]->strftime($time_format));
 }
+sub date_time_now { return date_time(DateTime->now(time_zone => $tz)); }
 sub date_time_out {
     return ($_[0]->strftime($date_format_out),
             $_[0]->strftime($time_format_out));
@@ -175,11 +176,11 @@ sub get_line {
     my ($check_time) = @_;
 
   retry:
+    ($date, $time) = date_time_now();
     my $status_json = http_get($url, $user, $pass);
     if ($status_json =~ m/(Network is unreachable|No route to host|Can't connect|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
         log_warn($1);
-        # 'timed out' can be misleading: also occurs on router down without having waited
-        sleep(5) unless $1 =~ m/Connection reset by peer/;
+        sleep(1) unless $1 =~ m/timed out|read timeout/;
         goto retry;
     }
     unless ($status_json =~ /\"time\":\"([\d:]*)\",\"unixtime\":(\d+),.*\"emeters\":\[\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)}\,\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\},\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\}\],\"total_power\":([\-\d\.]+),.*,\"uptime\":(\d+)/) {
@@ -428,7 +429,7 @@ do {
     $prev_timestamp = $timestamp;
     # $prev = $time;
     usleep(500000); # 0.5 secs; each iteration otherwise takes about .2 seconds
-    ($date, $time) = date_time(DateTime->now(time_zone => $tz));
+    ($date, $time) = date_time_now();
 } while(1);
 # while ($count_seconds < MAX_SECONDS); # stop after 1 day at the latest
 # while $time ge $prev # not yet wrap around at 24:00:00

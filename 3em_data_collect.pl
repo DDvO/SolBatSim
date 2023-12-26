@@ -183,7 +183,7 @@ sub get_line {
         sleep(1) unless $1 =~ m/timed out|read timeout/;
         goto retry;
     }
-    unless ($status_json =~ /\"time\":\"([\d:]*)\",\"unixtime\":(\d+),.*\"emeters\":\[\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)}\,\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\},\{\"power\":([\-\d\.]+),\"pf\":([\-\d\.]+),\"current\":([\-\d\.]+),\"voltage\":([\-\d\.]+),\"is_valid\":true,\"total\":([\d\.]+),\"total_returned\":([\d\.]+)\}\],\"total_power\":([\-\d\.]+),.*,\"uptime\":(\d+)/) {
+    unless ($status_json =~ /"time":"([\d:]*)","unixtime":(\d+),.*"emeters":\[\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)}\,\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\},\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\}\],"total_power":([\-\d\.]+),.*,"uptime":(\d+)/) {
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved
             log_warn("skipping error response: $1"); # e.g., by Squid
@@ -205,36 +205,35 @@ sub get_line {
            $9, $10, $11, $12, $13, $14,
            $15, $16, $17, $18, $19, $20,
            $21, $22);
-    my $dataA = "$powerA,$pfA,$currentA,$voltageA,$totalA,$total_returnedA";
-    my $dataB = "$powerB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB";
-    my $dataC = "$powerC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC";
     if ($unixtime) {
         $last_valid_unixtime = $unixtime;
+    } elsif ($last_valid_unixtime) {
+        log_warn("approximating missing 3EM status unixtime from last valid"
+                 ." one $last_valid_unixtime + uptime $uptime");
+        $unixtime = $last_valid_unixtime + $uptime;
     } else {
-        if ($last_valid_unixtime) {
-            log_warn("approximating missing 3EM status unixtime from last valid"
-                     ." one $last_valid_unixtime + uptime $uptime");
-            $unixtime = $last_valid_unixtime + $uptime;
-        } else {
-            log_warn("missing 3EM status unixtime, discarding '$status_json'");
-            sleep(1);
-            goto retry;
-        }
+        log_warn("missing 3EM status unixtime, discarding '$status_json'");
+        sleep(1);
+        goto retry;
     }
-    my ($date_3em, $time_3em) = date_time(time_epoch($unixtime));
-    my $data = "$dataA,$dataB,$dataC";
-    print "($time, $hour, $unixtime, $time_3em, $data)\n" if $debug;
 
+    my ($date_3em, $time_3em) = date_time(time_epoch($unixtime));
     if ($check_time) {
         my $time_hour = substr($time, 0, 5);
         log_warn("3EM status time '$hour' does not equal '$time_hour'")
             unless $hour eq $time_hour;
         log_warn("3EM status unixtime '$date_3em"."$date_time_sep$time_3em' ".
-                 "does not closely match '$date"."$date_time_sep$time'")
+                 "does not very closely match '$date"."$date_time_sep$time'")
             unless abs($unixtime - $start->epoch) <= 1
             # 3 seconds diff can happen easily
     }
-    my $power = $powerA + $powerB + $powerC;
+    my $power = $powerA + $powerB + $powerC; # may include PV power
+    my $dataA = "$powerA,$pfA,$currentA,$voltageA,$totalA,$total_returnedA";
+    my $dataB = "$powerB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB";
+    my $dataC = "$powerC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC";
+    my $data = "$dataA,$dataB,$dataC";
+    print "($time, $hour, $unixtime, $time_3em, $power, $data)\n" if $debug;
+
     log_warn("inconsistent total_power = $total_power ".
              "vs. $powerA + $powerB + $powerC")
         unless abs($power - $total_power) <= 0.1;

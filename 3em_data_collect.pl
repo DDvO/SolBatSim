@@ -1,12 +1,18 @@
 #!/usr/bin/perl
 
-# Collect status data reported each second by Shelly (Pro) 3EM energy meter.
+# Collect status data reported each second by a Shelly (Pro) 3EM energy meter.
 # Uses the http://<addr>/status endpoint (yet so far not the MQTT interface).
+# Optionally collect also PV status data reported each second by Shelly Plus 1PM
+# using the http://<addr_1pm>/rpc/Shelly.GetStatus endpoint but so far not MQTT.
+# In this case, the total load reported by the 3EM energy meter is corrected
+# by adding the absolute value of the PV power reported by the 1PM power meter.
 # Outputs data in the following files, each of which is optional:
-# * <base_name><energy_name>_<year>.csv energy imported and exported per hour
-# * <base_name><load_min>_<year>.csv    total load per minute, one line per hour
-# * <base_name><load_sec>_<date>.csv    total load per second, one line per hour
+# * <base_name><energy_name>_<year>.csv energy consumed, produced, balance,
+#                                       imported and exported per hour
+# * <base_name><load_min>_<year>.csv  average load per minute, one line per hour
+# * <base_name><load_sec>_<date>.csv    load per second, one line per hour
 # * <base_name><status_name>_<date>.csv status of the three phases per second
+# * <base_name><pvstat_name>_<date>.csv status of optional PV input per second
 # * <base_name><log_name>_<year>.txt    info on the data collection per event
 # The script is robust w.r.t. intermittently missing power data by interpolating
 # the data over the range of seconds where no power measurement is available.
@@ -14,11 +20,15 @@
 # system reboot), the script should be started automatically when not currently
 # running, for instance using a Linux cron job that is triggered each minute.
 # It can recover the per-minute and per-hour data accumulation for the current
-# day if the file with the total power values per second has been produced.
+# day if the file with the load per second is available. For correct recovery
+# including PV production, the file with PV status data per second is needed.
+
+# day if the file containing the load values per second is available.
 #
 # CLI options, each of which may be a value or "" indicating none/default:
-# <base_name> <energy_name> <load_min> <load_sec> <status_name> <log_name>
-# <time_zone> <3em_addr> <3em_username> <3em_password>
+# <base_name> <energy_name>
+# <load_min> <load_sec> <status_name> <pvstat_name> <log_name> <time_zone>
+# <3em_addr> <1pm_addr> <3em_username> <3em_password> <1pm_user> <1pm_pass>
 #
 # Alternatively to providing options at the CLI, they may also be given
 # via environment variables, which is advisable for sensitive passwords.
@@ -41,6 +51,7 @@ my $out_energy   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_ENERGY};   # per hour
 my $out_load_min = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOAD_MIN}; # per minute
 my $out_load_sec = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOAD_SEC}; # per second
 my $out_stat     = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_STATUS};   # per second
+my $out_pvstat   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_PV};       # per second
 my $out_log      = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOG};      # per event
 
 # time zone for output e.g., "local"
@@ -52,10 +63,16 @@ my $date_time_sep_out  = $ENV{Shelly_3EM_OUT_DATE_TIME_SEP} || $date_time_sep;
 my $time_format        = "%H:%M:%S";
 my $time_format_out    = $ENV{Shelly_3EM_OUT_TIME_FORMAT} || $time_format;
 
-my $addr = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR} || "3em"; # e.g. 192.168.178.123
-my $user = $ARGV[$i++] || $ENV{Shelly_3EM_USER}; # HTTP user name, if needed
-my $pass = $ARGV[$i++] || $ENV{Shelly_3EM_PASS}; # HTTP password, if needed
-my $url  = "http://$addr/status";
+my $addr     = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR}; # e.g. 192.168.178.123
+my $addr_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_ADDR}; # e.g. 192.168.124;
+   $addr_1pm = 0 if $addr_1pm eq "";
+my $url      = "http://$addr/status";
+my $url_1pm  = "http://$addr_1pm/rpc/Shelly.GetStatus" if $addr_1pm;
+
+my $user     = $ARGV[$i++] || $ENV{Shelly_3EM_USER}; # HTTP user name, if needed
+my $pass     = $ARGV[$i++] || $ENV{Shelly_3EM_PASS}; # HTTP password, if needed
+my $user_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_USER} || $user;
+my $pass_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_PASS} || $pass;
 
 my $debug = $ENV{Shelly_3EM_DEBUG} // 0;
 
@@ -99,7 +116,7 @@ use constant SECONDS_PER_MINUTE => 60;
 use constant SECONDS_PER_HOUR => 60 * SECONDS_PER_MINUTE;
 # max seconds per day even for days with daylight saving time (DST) adaptation:
 # use constant MAX_SECONDS => (24 + 1) * SECONDS_PER_HOUR;
-my ($count_seconds, $count_gaps) = (0, 0);
+my ($count_seconds, $count_gaps, $count_1pm_miss) = (0, 0, 0);
 
 sub out_name {
     my ($name, $period, $ext) = @_;
@@ -112,6 +129,7 @@ my ($energy, $EO);
 my ($load_min, $LM);
 my ($load_sec, $LS);
 my ($status, $SO);
+my ($pvstat, $PO);
 my ($log, $LOG);
 # preliminary log:
 sub log_name { return out_name($out_log, $_[0], ".txt"); }
@@ -128,6 +146,7 @@ sub log_warn { log_msg("WARNING: $_[0]"); }
 sub do_after_day {
     close $LS if defined $LS;
     close $SO if defined $SO;
+    close $PO if defined $PO;
 }
 
 sub do_after_year {
@@ -136,9 +155,20 @@ sub do_after_year {
     close $LOG if defined $LOG;
 }
 
+my ($energy_consumed_this_hour, $energy_produced_this_hour) = (0, 0);
+my  $energy_balanced_this_hour = 0;
+my ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
+
 sub cleanup() {
     do_after_day();
-    log_msg("end after $count_seconds seconds, $count_gaps gaps");
+    log_msg "energy sums in Wh so far last hour: "
+        ."consumed ".round($energy_consumed_this_hour / SECONDS_PER_HOUR).", "
+        ."produced ".round($energy_produced_this_hour / SECONDS_PER_HOUR).", "
+        ."balance " .round($energy_balanced_this_hour / SECONDS_PER_HOUR).", "
+        ."imported ".round($energy_imported_this_hour / SECONDS_PER_HOUR).", "
+        ."exported ".round($energy_exported_this_hour / SECONDS_PER_HOUR);
+    log_msg("end after $count_seconds seconds, ".
+            "$count_gaps gaps, $count_1pm_miss PV data misses");
     do_after_year();
 }
 
@@ -172,21 +202,21 @@ sub http_get {
 }
 
 my $last_valid_unixtime = 0;
-sub get_line {
+sub get_3em {
     my ($check_time) = @_;
 
   retry:
     ($date, $time) = date_time_now();
     my $status_json = http_get($url, $user, $pass);
     if ($status_json =~ m/(Network is unreachable|No route to host|Can't connect|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
-        log_warn($1);
+        log_warn("$1 for 3EM");
         sleep(1) unless $1 =~ m/timed out|read timeout/;
         goto retry;
     }
     unless ($status_json =~ /"time":"([\d:]*)","unixtime":(\d+),.*"emeters":\[\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)}\,\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\},\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\}\],"total_power":([\-\d\.]+),.*,"uptime":(\d+)/) {
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved
-            log_warn("skipping error response: $1"); # e.g., by Squid
+            log_warn("skipping error response: $1 for 3EM"); # e.g., by Squid
         } else {
             my $shown = substr($status_json, 0, 1100); # typically ~1020 chars
             log_warn("error parsing 3EM status response '$shown'");
@@ -235,16 +265,65 @@ sub get_line {
     my $data = "$dataA,$dataB,$dataC";
     print "($time, $hour, $unixtime, 3EM $time_3em, $power, $data)\n" if $debug;
 
-    log_warn("inconsistent total_power = $total_power ".
+    log_warn("inconsistent 3EM total_power = $total_power ".
              "vs. $powerA + $powerB + $powerC")
         unless abs($power - $total_power) <= 0.1;
     return ($unixtime, $power, $data);
 }
 
-my ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
-my $power_sum_minute = 0;
-my ($prev_power, $prev_timestamp) = (0, 0);
+sub get_1pm {
+    my ($timestamp) = @_;
+    my ($unixtime, $power, $data) = (0, 0, ""); # default: no current data
+
+    my $status_json = http_get($url_1pm, $user_1pm, $pass_1pm);
+    if ($status_json =~ m/(Network is unreachable|No route to host|Can't connect|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
+        log_warn("$1 for 1PM");
+        goto end;
+    }
+    unless ($status_json =~ /"switch:0":\{"id":0, "source":"\w+", "output":\w+, "apower":([\-\d\.]+), "voltage":([\-\d\.]+), "current":([\-\d\.]+), "aenergy":\{"total":([\-\d\.]+),"by_minute":\[([\-\d\.]+),([\-\d\.]+),([\-\d\.]+)\],"minute_ts":(\d+)\},"temperature":\{"tC":([\-\d\.]+), "tF":([\-\d\.]+)\}\}/) {
+        if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
+            # e.g.: The requested URL could not be retrieved
+            log_warn("skipping error response: $1 for 1PM"); # e.g., by Squid
+        } else {
+            my $shown = substr($status_json, 0, 800); # typically ~710 chars
+            log_warn("error parsing 1PM status response '$shown'");
+        }
+        goto end;
+    }
+
+    my ($apower, $voltage, $current, $total, $min1, $min2, $min3, $ts, $tC, $tF)
+        = ($1, $2, $3, $4, $5, $6, $7, $8 + 0, $9, $10);
+    if ($ts) {
+        $unixtime = $ts;
+    } elsif ($timestamp) {
+        log_warn("substituting missing 1PM status minute_ts from 3EM timestamp $timestamp");
+        $unixtime = $timestamp;
+    } else {
+        log_warn("missing 1PM status minute_ts, discarding '$status_json'");
+        goto end;
+    }
+    # PV power might be reported negative, but usually is reported >= 0
+    ($power, $data) = (abs($apower), "$voltage,$current,$total,$tC");
+    $power = 0 if $power < 1; # even at night, 1PM often reports up to 0.8 W
+
+    my $dt = time_epoch($unixtime);
+    my $hour = sprintf("%02d:%02d", $dt->hour, $dt->minute);
+    my ($date_1pm, $time_1pm) = date_time($dt);
+    print "($time, $hour, $unixtime, 1PM $time_1pm, $power, $data)\n" if $debug;
+
+    log_warn("1PM status minute_ts '$date_1pm"."$date_time_sep$time_1pm' ".
+             "does not very closely match 3EM timestamp '$date"."$date_time_sep$time'")
+        unless abs($unixtime - $timestamp) <= 3; # 3 seconds diff can happen easily
+  end:
+    return ($unixtime, $power, $data);
+}
+
+my $load_sum_minute = 0;
+my ($prev_power, $prev_timestamp) = (0, 0); # may include PV power
 # my $prev = "";
+my $prev_pv_power = 0;
+
+log_msg("start - will connect to $url".($url_1pm ? " and $url_1pm" : ""));
 
 # try recover data from any previous run
 # TODO maybe add recovery also for $out_load_min or $out_stat
@@ -270,22 +349,68 @@ if ($out_load_sec) {
             unless $dt;
         $prev_timestamp = $dt->epoch;
         my ($minute, $second) = ($dt->minute, $dt->second);
+
+        my $count = -1;
+        my @pv_power = ("");
+        if ($addr_1pm) {
+            if ($out_pvstat) {
+                my $pvstat = out_name($out_pvstat, $date, ".csv");
+                if (open(my $PO, '<' ,$pvstat)) {
+                    my $time = $dt->strftime($time_format_out);
+                    while (<$PO>) {
+                        next if $count++ == -1;
+                        $count--;
+                        chomp;
+                        my @values = (split ",", $_);
+                        die "cannot parse line '$_' of PV status file '$pvstat'"
+                            if $#values < 1;
+                        next if $count == 0 && $values[0] lt $time;
+                        $count++;
+                        my $pv = $values[1];
+                        die "cannot parse PV power value '$pv' in line '$_' of PV status file '$pvstat'"
+                            unless $pv =~ m/^-?[\d\.]+$/;
+                        push @pv_power, $pv;
+                    }
+                    close $PO;
+                    log_warn("for the time frame according to the last line of the high-resolution load file '$load_sec', the count of PV power values in PV status file '$pvstat': $count does not match number of load values: $n") if $count != $n;
+                } else {
+                    log_warn("no previouly produced PV status file '$pvstat' found, so $cannot_recover");
+                }
+            } else {
+                log_warn("as no PV status file <pvstat_name> is defined, $cannot_recover");
+            }
+        }
+
         for (my $i = 1; $i <= $n; $i++) {
-            $prev_power = $elems[$i];
-            die "cannot parse power value '$prev_power' in last line of high-resolution load file '$load_sec'"
-                unless $prev_power =~ m/^-?\d+$/;
-            $power_sum_minute += $prev_power;
+            my $load = $elems[$i];
+            die "cannot parse power value '$load' in last line '$line' of high-resolution load file '$load_sec'"
+                unless $load =~ m/^-?\d+$/;
+            $prev_pv_power = $addr_1pm && $i <= $count ?
+                sprintf("%.1f", $pv_power[$i] + 0) : 0;
+            $prev_power = sprintf("%.1f", $load - $prev_pv_power);
+            $load_sum_minute += $load;
+            $energy_consumed_this_hour += $load;
+            $energy_produced_this_hour += $prev_pv_power;
+            $energy_balanced_this_hour += $prev_power;
             if ($prev_power > 0) {
                 $energy_imported_this_hour += $prev_power;
             } else {
                 $energy_exported_this_hour -= $prev_power;
             }
+            print "$time $i<=$n, load $load - pv $prev_pv_power = $prev_power, "
+                ."energy sums: consumed $energy_consumed_this_hour, "
+                ."produced $energy_produced_this_hour, "
+                ."balance $energy_balanced_this_hour, "
+                ."produced $energy_produced_this_hour, "
+                ."imported $energy_imported_this_hour, "
+                ."exported $energy_exported_this_hour\n"
+                if $debug && $addr_1pm && $i > $n - 10;
             if (++$second >= 60) {
                 $second = 0;
                 $minute++;
                 die "too many power values in last line '$line' of high-resolution load file '$load_sec'"
                     if $minute >= 60;
-                $power_sum_minute = 0;
+                $load_sum_minute = 0;
             }
         }
         $prev_timestamp += $n;
@@ -314,9 +439,9 @@ sub do_before_year {
     $LOG->autoflush; # immediately show each line reporting an event
     $EO ->autoflush; # immediately show each line reporting energy per hour
     $LM ->autoflush; # immediately show each load per minute
-    log_msg("start - will connect to $url") if $first;
     # on empty energy output CSV file, add header:
-    print $EO "time [$tz],imported [Wh],exported [Wh]\n" if -z $energy;
+    print $EO "time [$tz],consumed [Wh],produced [Wh],balance [Wh],".
+        "imported [Wh],exported [Wh]\n" if -z $energy;
     # no header for load output CSV file
 }
 
@@ -329,15 +454,20 @@ sub do_before_day {
     do_before_year($date_3em, $first);
     $load_sec = out_name($out_load_sec, $date_3em_out, ".csv");
     $status = out_name($out_stat, $date_3em_out, ".csv");
+    $pvstat = out_name($out_pvstat, $date_3em_out, ".csv");
     open($LS,'>>',$load_sec) || die "cannot open '$load_sec' for appending: $!";
     open($SO, '>>', $status) || die "cannot open '$status' for appending: $!";
+    open($PO, '>>', $pvstat) || die "cannot open '$pvstat' for appending: $!";
 
-    print $SO "time [$tz],total_power,".
+    # no header for load output CSV file
+    print $SO "time [$tz],PV power [W],total_power [W],".
    "powerA [W],pfA,currentA [A],voltageA [V],totalA [Wh],total_returnedA [Wh],".
    "powerB [W],pfB,currentB [A],voltageB [V],totalB [Wh],total_returnedB [Wh],".
    "powerC [W],pfC,currentC [A],voltageC [V],totalC [Wh],total_returnedC [Wh]\n"
         if -z $status; # on empty status output CSV file, add header
-    # no header for load output CSV file
+    print $PO "time [$tz],PV power [W],".
+        "voltage [V],current [A],total [Wh],temperature [°C]\n"
+        if -z $pvstat; # on empty pv output CSV file, add header
 }
 
 sub do_before_hour {
@@ -357,7 +487,9 @@ sub do_before_hour {
 }
 
 sub do_each_second {
-    my ($timestamp, $power, $data) = @_;
+    my ($timestamp, $power, $data, $pv_power, $pv_data) = @_;
+    my $load = $power + $pv_power;
+    log_warn("load is not positive: $load") if $load <= 0;
     my $time = time_epoch($timestamp);
     my ($date_3em    , $time_3em    ) = date_time($time);
     my ($date_3em_out, $time_3em_out) = date_time_out($time);
@@ -366,7 +498,10 @@ sub do_each_second {
     do_before_hour($date_3em, $time_3em, $date_3em_out, $time_3em_out, $first);
 
     ++$count_seconds;
-    $power_sum_minute += $power;
+    $load_sum_minute += $load;
+    $energy_consumed_this_hour += $load;
+    $energy_produced_this_hour += $pv_power;
+    $energy_balanced_this_hour += $power;
 # https://www.promotic.eu/en/pmdoc/Subsystems/Comm/PmDrivers/IEC62056_OBIS.htm
 # https://de.wikipedia.org/wiki/Stromz%C3%A4hler Zweirichtungszähler für
 # Verbrauch (OBIS-Kennzahl 1.8.0) und Einspeisung (OBIS-Kennzahl 2.8.0)
@@ -374,23 +509,38 @@ sub do_each_second {
         if $power > 0; # Positive active energy, energy meter register 1.8.0
     $energy_exported_this_hour -= $power
         if $power < 0; # Negative active energy, energy meter register 2.8.0
-    my $power_ = round($power);
-    print $LS ",$power_";
-    print $SO "$time_3em_out,$power_$data\n";
+    print $LS ",".round($load);
+    print $SO "$time_3em_out,$pv_power,$power$data\n";
+    print $PO "$time_3em_out,$pv_power$pv_data\n";
 
     if (!$first && $time_3em =~/:59$/) { # end of each minute
-        print $LM ",".round($power_sum_minute / SECONDS_PER_MINUTE);
-        $power_sum_minute = 0;
+        print $LM ",".round($load_sum_minute / SECONDS_PER_MINUTE);
+        $load_sum_minute = 0;
         # make load and status output visible
         $LM->flush();
         $LS->flush();
         $SO->flush();
+        $PO->flush();
 
-        # at end of each hour, calculate total imported/exported energy
-        if ($time_3em =~/59:59$/) {
-            printf $EO "$date_3em_out$date_time_sep_out$time_3em_out,%d,%d\n",
+        if ($time_3em =~/59:59$/) { # at end of each hour
+            printf $EO
+                "$date_3em_out$date_time_sep_out$time_3em_out,%d,%d,%d,%d,%d\n",
+                round($energy_consumed_this_hour / SECONDS_PER_HOUR),
+                round($energy_produced_this_hour / SECONDS_PER_HOUR),
+                round($energy_balanced_this_hour / SECONDS_PER_HOUR),
                 round($energy_imported_this_hour / SECONDS_PER_HOUR),
                 round($energy_exported_this_hour / SECONDS_PER_HOUR);
+            my $diff1 = round(($energy_consumed_this_hour -
+                               $energy_produced_this_hour) / SECONDS_PER_HOUR);
+            my $diff0 = round(($energy_balanced_this_hour) / SECONDS_PER_HOUR);
+            my $diff2 = round(($energy_imported_this_hour -
+                               $energy_exported_this_hour) / SECONDS_PER_HOUR);
+            log_warn("energy balance = $diff0 vs. $diff1 = ".
+                     "energy consumed - produced") if abs($diff0 - $diff1) > 1;
+            log_warn("energy balance = $diff0 vs. $diff2 = ".
+                     "energy imported - exported") if abs($diff0 - $diff2) > 1;
+            ($energy_consumed_this_hour, $energy_produced_this_hour) = (0, 0);
+             $energy_balanced_this_hour = 0;
             ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
         }
     }
@@ -402,29 +552,44 @@ use Time::HiRes qw(usleep);
 $start = DateTime->now(time_zone => $tz);
 do {
     my $first = $count_seconds == 0;
-    my ($timestamp, $power, $data) = get_line($first);
+    my ($timestamp, $power, $data) = get_3em($first); # may include PV power
+    my ($pv_timestamp, $pv_power, $pv_data) = (0, 0, "");
     my $diff_seconds = $prev_timestamp ? $timestamp - $prev_timestamp : 1;
     if ($diff_seconds == 0) {
         print "$time: $timestamp (skipping result for same time)\n" if $debug;
     } else {
+        if ($addr_1pm && $diff_seconds >= 1) {
+            ($pv_timestamp, $pv_power, $pv_data) = get_1pm($timestamp);
+            if (!$pv_timestamp) {
+                log_warn("taking previous PV power value $prev_pv_power "
+                         ."as no current PV status data available from 1PM");
+                ++$count_1pm_miss;
+                $pv_power = $prev_pv_power;
+            }
+        }
         print "$time: $timestamp ($diff_seconds seconds)\n" if $debug;
         if ($diff_seconds > 1) {
             log_warn("time gap ".++$count_gaps.": $diff_seconds seconds");
             # linear interpolation of missing time and power
             my $power_step = ($power - $prev_power) / $diff_seconds;
+            my $pv_power_step = ($pv_power - $prev_pv_power) / $diff_seconds;
             while (--$diff_seconds) {
                 $prev_power += $power_step;
-                do_each_second(++$prev_timestamp, $prev_power, "");
+                $prev_pv_power += $pv_power_step;
+                do_each_second(++$prev_timestamp, round($prev_power), "",
+                               round($prev_pv_power), "");
             }
         }
         if ($diff_seconds < 0) {
             log_warn("skipping status entry due to negative 3EM unixtime difference: $diff_seconds");
             $timestamp = $prev_timestamp;
         } else {
-            do_each_second($timestamp, $power, ",$data");
+            do_each_second($timestamp,
+                           $power, ",$data", $pv_power, ",$pv_data");
         }
     }
 
+    $prev_pv_power = $pv_power;
     $prev_power = $power;
     $prev_timestamp = $timestamp;
     # $prev = $time;

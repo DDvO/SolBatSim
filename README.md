@@ -18,21 +18,28 @@ may be used as a reference for comparing PV simulations.
 
 Load profiles may be taken from public sources such as [HTW Berlin](
 https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
-or obtained from a suitable local digital metering device.\
-[This Perl script](3em_data_collect.pl) gathers the status data of
-a Shelly (Pro) 3EM energy meter each second and can save it in a file per day,
-including a total power value obtained by adding the values of the three phases.
-It can also produce another file per day with the total power values per second,
-a file per year with the average total power per minute, and another file per
-year with a record per hour of the imported energy and exported energy: the
-accumulated positive/negative per-second total power values over the given hour.
+or obtained from a suitable local digital metering device.
+
+[This Perl script](3em_data_collect.pl)
+gathers the status data reported each second by a Shelly (Pro) 3EM energy meter.
+It can also collect the PV status data reported each second by a Shelly Plus 1PM.
+In this case, the total load reported by the 3PM energy meter is corrected by
+adding the absolute value of the PV power input reported by the 1PM power meter.
+The script can save the per-second status data in a file per day,
+including a total load value obtained by adding the values of the three phases.
+It can also produce another file per day with one load value per second,
+a file per year with the average load per minute, and another file per year with
+a record per hour of the energy consumption, production (if any), and balance,
+as well as the imported energy and exported energy, obtained by accumulating
+the positive/negative per-second total power values over the given hour.
 The script is robust against intermittently missing power data by interpolating
 the data over the range of seconds where no power measurement is available.
 In order to cope with inadvertent abortion of script execution (e.g., due to
 system reboot), the script should be started automatically when not currently
 running, for instance using a Linux cron job that is triggered each minute.
 It can recover the per-minute and per-hour data accumulation for the current day
-if the file with the total power values per second has been produced.
+if the file with the load values per second is available. For correct recovery
+including PV production, also the file with PV status data per second is needed.
 
 ## Kurzbeschreibung
 
@@ -57,18 +64,25 @@ Eigenverbrauch mit häuslichen PV-Anlagen und seiner Simulation.
 
 Lastprofile kann man aus öffentlichen Quellen beziehen wie [HTW Berlin](
 https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
-oder mit Hilfe eines geeigneten Messgeräts bzw. Stromzählers selbst gewinnen.\
-[Dieses Perl-Skript](3em_data_collect.pl​) von einem Energiemessgerät
-Shelly (Pro) 3EM die Status-Daten kontinuierlich im Sekundentakt auslesen
-und abspeichern:
-* In einer Datei pro Tag
-  je Sekunde alle Statusdaten für die drei Phasen und die saldierte Leistung,
+oder mit Hilfe eines geeigneten Messgeräts bzw. Stromzählers selbst gewinnen.
+
+[Dieses Perl-Skript](3em_data_collect.pl​) liest die sekündlichen Status-Daten
+eines Energiemessgeräts Shelly (Pro) 3EM kontinuierlich aus. Es kann sie mit den
+Status-Daten eines Shelly Plus 1PM verknüpfen, der die Leistung einer kleinen
+PV-Anlage misst, indem es als Haushalts-Last die Summe aus der saldierten
+Leistung am Energiemessgerät und dem Absolutbetrag der PV-Leistung bildet.
+Es kann folgende Daten abspeichern:
+* In einer Datei pro Tag alle Statusdaten je Sekunde aus dem Energiemessgerät
+  für die drei Phasen und die saldierte Leistung,
   also die Summe der Leistungswerte über alle drei Phasen.
-* In einer Datei pro Tag ein Lastprofil mit der saldierten Leistung je Sekunde
-* In einer Datei pro Jahr ein Lastprofil mit einem Eintrag je Minute.
-  mit dem Durchschnitt der saldierten Leistungswerte über die Minute
-* In einer Datei pro Jahr je Stunde die bezogene (importierte) Energie und
-  eingespeiste (exportierte) Energie, die sich durch Akkumulation der positiven
+* In einer Datei pro Tag alle Statusdaten je Sekunde aus dem PV-Daten-Messgerät.
+* In einer Datei pro Tag ein Lastprofil mit der saldierten Leistung je Sekunde.
+* In einer Datei pro Jahr ein Lastprofil mit einem Eintrag je Minute
+  mit dem Durchschnitt der saldierten Leistungswerte über die Minute.
+* In einer Datei pro Jahr je Stunde die verbrauchte und erzeugte Energie, die
+  Energiebilanz (Riemann-Summe über die saldierte Leistung am Energiemessgerät),
+  sowie die bezogene (importierte) und die eingespeiste (exportierte) Energie,
+  welche sich durch Akkumulation der positiven
   bzw. negativen saldierten Leistungswerte je Sekunde über die Stunde ergibt.
 
 Das Skript ist robust gegen zeitweise fehlende Leistungs-Daten, z.B. wegen
@@ -78,8 +92,10 @@ Damit nach Abbrüchen der Skript-Ausführung z.B. durch System-Neustarts das
 Skript wieder automatisch weiter laufen kann, sollte es z.B. über einen Linux
 cron job o.ä. jede Minute neu gestartet werden, sofern es aktuell nicht läuft.
 Wenn für den aktuellen Tag die Lastprofil-Datei mit der saldierten Leistung je
-Sekunde produziert wurde, kann es basierend auf dessen Inhalt die Akkumulation
+Sekunde verfügbar ist, kann es basierend auf dessen Inhalt die Akkumulation
 minütlicher und stündlicher Durchschnittsleistungs- und Energiedaten fortsetzen.
+Bei vorhandener PV-Produktion wird dabei für eine korrekte Wiederaufnahme auch
+die Datei mit den sekündlichen bisherigen PV-Statusdaten des Tages benötigt.
 
 ### Details
 

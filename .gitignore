@@ -3,3 +3,8 @@
 *.diff
 *.orig
 attic/
+Lastprofil*
+Solar.pl
+Solar.txt
+Timeseries*
+PVTool_*

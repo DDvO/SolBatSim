@@ -559,6 +559,8 @@ sub get_profile {
         while (my $line = <$IN>) {
             chomp $line;
             next if $line =~ m/^\s*#/; # skip comment line
+            # skip header line of PVTool individual input or similar CSV file:
+            next if $line =~ m/[A-Za-z]{4,}/; # e.g., date", "time", "power"
             $lines[$hours++] = $line;
         }
         close $IN unless $test;

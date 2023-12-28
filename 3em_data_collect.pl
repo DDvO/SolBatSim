@@ -75,6 +75,8 @@ my $user_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_USER} || $user;
 my $pass_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_PASS} || $pass;
 
 my $debug = $ENV{Shelly_3EM_DEBUG} // 0;
+my $test_extra_power = $ENV{Shelly_3EM_EXTRA} // 0;
+my $test_extra_pv_power = $ENV{Shelly_1PM_EXTRA} // 0;
 
 die "missing CLI argument or env. variable 'Shelly_3EM_ADDR'"   unless $addr;
 die "missing CLI argument or env. variable 'Shelly_3EM_OUT_TZ'" unless $tz;
@@ -553,6 +555,7 @@ $start = DateTime->now(time_zone => $tz);
 do {
     my $first = $count_seconds == 0;
     my ($timestamp, $power, $data) = get_3em($first); # may include PV power
+    $power += $test_extra_power;
     my ($pv_timestamp, $pv_power, $pv_data) = (0, 0, "");
     my $diff_seconds = $prev_timestamp ? $timestamp - $prev_timestamp : 1;
     if ($diff_seconds == 0) {
@@ -560,6 +563,8 @@ do {
     } else {
         if ($addr_1pm && $diff_seconds >= 1) {
             ($pv_timestamp, $pv_power, $pv_data) = get_1pm($timestamp);
+            $pv_power += $test_extra_pv_power;
+               $power -= $test_extra_pv_power;
             if (!$pv_timestamp) {
                 log_warn("taking previous PV power value $prev_pv_power "
                          ."as no current PV status data available from 1PM");

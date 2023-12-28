@@ -222,8 +222,9 @@ sub get_line {
         my $time_hour = substr($time, 0, 5);
         log_warn("3EM status time '$hour' does not equal '$time_hour'")
             unless $hour eq $time_hour;
-        log_warn("3EM status unixtime '$date_3em"."$date_time_sep$time_3em' ".
-                 "does not very closely match '$date"."$date_time_sep$time'")
+        log_warn("3EM status unixtime '$date_3em"."$date_time_sep$time_3em'".
+                 " does not very closely match ".
+                 "host system time '$date"."$date_time_sep$time'")
             unless abs($unixtime - $start->epoch) <= 1
             # 3 seconds diff can happen easily
     }
@@ -232,7 +233,7 @@ sub get_line {
     my $dataB = "$powerB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB";
     my $dataC = "$powerC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC";
     my $data = "$dataA,$dataB,$dataC";
-    print "($time, $hour, $unixtime, $time_3em, $power, $data)\n" if $debug;
+    print "($time, $hour, $unixtime, 3EM $time_3em, $power, $data)\n" if $debug;
 
     log_warn("inconsistent total_power = $total_power ".
              "vs. $powerA + $powerB + $powerC")
@@ -404,9 +405,9 @@ do {
     my ($timestamp, $power, $data) = get_line($first);
     my $diff_seconds = $prev_timestamp ? $timestamp - $prev_timestamp : 1;
     if ($diff_seconds == 0) {
-        print "$time: $timestamp (skipping same result)\n" if $debug;
+        print "$time: $timestamp (skipping result for same time)\n" if $debug;
     } else {
-        print "$time: $timestamp,$power,$data\n" if $debug;
+        print "$time: $timestamp ($diff_seconds seconds)\n" if $debug;
         if ($diff_seconds > 1) {
             log_warn("time gap ".++$count_gaps.": $diff_seconds seconds");
             # linear interpolation of missing time and power

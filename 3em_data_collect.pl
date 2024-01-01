@@ -261,9 +261,12 @@ sub get_3em {
             # 3 seconds diff can happen easily
     }
     my $power = $powerA + $powerB + $powerC; # may include PV power
-    my $dataA = "$powerA,$pfA,$currentA,$voltageA,$totalA,$total_returnedA";
-    my $dataB = "$powerB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB";
-    my $dataC = "$powerC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC";
+    my ($pA, $pB, $pC) = (sprintf("%6.2f", $powerA),
+                          sprintf("%6.2f", $powerB),
+                          sprintf("%6.2f", $powerC));
+    my $dataA = "$pA,$pfA,$currentA,$voltageA,$totalA,$total_returnedA";
+    my $dataB = "$pB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB";
+    my $dataC = "$pC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC";
     my $data = "$dataA,$dataB,$dataC";
     print "($time, $hour, $unixtime, 3EM $time_3em, $power, $data)\n" if $debug;
 
@@ -370,7 +373,7 @@ if ($out_load_sec) {
                         $count++;
                         my $pv = $values[1];
                         die "cannot parse PV power value '$pv' in line '$_' of PV status file '$pvstat'"
-                            unless $pv =~ m/^-?[\d\.]+$/;
+                            unless $pv =~ m/^\s*-?[\d\.]+$/;
                         push @pv_power, $pv;
                     }
                     close $PO;
@@ -386,10 +389,9 @@ if ($out_load_sec) {
         for (my $i = 1; $i <= $n; $i++) {
             my $load = $elems[$i];
             die "cannot parse power value '$load' in last line '$line' of high-resolution load file '$load_sec'"
-                unless $load =~ m/^-?\d+$/;
-            $prev_pv_power = $addr_1pm && $i <= $count ?
-                sprintf("%.1f", $pv_power[$i] + 0) : 0;
-            $prev_power = sprintf("%.1f", $load - $prev_pv_power);
+                unless $load =~ m/^\s*-?\d+$/;
+            $prev_pv_power = $addr_1pm && $i <= $count ? $pv_power[$i] + 0 : 0;
+            $prev_power = $load - $prev_pv_power;
             $load_sum_minute += $load;
             $energy_consumed_this_hour += $load;
             $energy_produced_this_hour += $prev_pv_power;
@@ -512,8 +514,9 @@ sub do_each_second {
     $energy_exported_this_hour -= $power
         if $power < 0; # Negative active energy, energy meter register 2.8.0
     print $LS ",".round($load);
-    print $SO "$time_3em_out,$pv_power,$power$data\n";
-    print $PO "$time_3em_out,$pv_power$pv_data\n";
+    my $pvpower = $pv_power ? sprintf("%5.1f", $pv_power) : "    0";
+    print $SO "$time_3em_out,$pvpower,".sprintf("%+6.2f", $power)."$data\n";
+    print $PO "$time_3em_out,$pvpower$pv_data\n";
 
     if (!$first && $time_3em =~/:59$/) { # end of each minute
         print $LM ",".round($load_sum_minute / SECONDS_PER_MINUTE);
@@ -581,8 +584,8 @@ do {
             while (--$diff_seconds) {
                 $prev_power += $power_step;
                 $prev_pv_power += $pv_power_step;
-                do_each_second(++$prev_timestamp, round($prev_power), "",
-                               round($prev_pv_power), "");
+                do_each_second(++$prev_timestamp,
+                               $prev_power, "", $prev_pv_power, "");
             }
         }
         if ($diff_seconds < 0) {

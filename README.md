@@ -66,6 +66,27 @@ Lastprofile kann man aus öffentlichen Quellen beziehen wie [HTW Berlin](
 https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
 oder mit Hilfe eines geeigneten Messgeräts bzw. Stromzählers selbst gewinnen.
 
+Lastprofil-Dateien sollten folgendes Format haben:
+* CSV (Textdatei mit Daten, die durch Kommata getrennt sind)
+* Zeilen mit `#` am Anfang werden als Kommentarzeilen ignoriert, ebenso Zeilen,
+  die mindestens ein Wort mit vier Buchstaben enthalten, z.B. die Kopfzeile
+  `"Datetime";"Power"` von Dateien zum "Import individueller stündlicher
+  Verbauch" des [PVTool-Rechners](https://www.akkudoktor.net/pvtool-rechner/).
+* Entweder genau 365 Datenzeilen mit jeweils Last-Daten pro Tag\
+  oder mindestens 24 und maximal 24 * 365 Daten-Zeilen mit Last-Daten pro Stunde
+  &mdash; bei weniger als 8760 Datenzeilen wird für den Rest das Jahres zyklisch
+  mit den vorhandenen Daten aufgefüllt, so dass man z.B. auch mit Daten
+  von nur einem Tag (24 Stunden) oder einer Woche etwas anfangen kann.
+* In jeder Datenzeile steht in der ersten Spalte meist Datum und Uhrzeit,
+  aber diese Spalte wird ignoriert.\
+  Dahinter stehen Datenpunkte mit Last/Verbrauchs-Werten, die als gleichmäßig
+  über den jeweiligen Zeitraum (Tag oder Stunde) verteilt angesehen werden,
+  Also bei Last-Daten pro Stunde z.B. nur eine Zahl bei Stundenauflösung,
+  12 Zahlen bei Daten im 5-Minuten-Abstand, 60 Zahlen bei Minutenauflösung, usw.
+* Die Einheit der Last-Datenwerte (z.B. W oder kW oder kWh) ist unerheblich
+  &mdash; es wird ohnehin auf den Jahresverbrauch skaliert,
+  den man getrennt angeben muss.
+
 [Dieses Perl-Skript](3em_data_collect.pl​) liest die sekündlichen Status-Daten
 eines Energiemessgeräts Shelly (Pro) 3EM kontinuierlich aus. Es kann sie mit den
 Status-Daten eines Shelly Plus 1PM verknüpfen, der die Leistung einer kleinen
@@ -79,6 +100,7 @@ Es kann folgende Daten abspeichern:
 * In einer Datei pro Tag ein Lastprofil mit der saldierten Leistung je Sekunde.
 * In einer Datei pro Jahr ein Lastprofil mit einem Eintrag je Minute
   mit dem Durchschnitt der saldierten Leistungswerte über die Minute.
+  Diese Datei ist sehr gut als Eingabe-Datei für den SolBatSim geeignet.
 * In einer Datei pro Jahr je Stunde die verbrauchte und erzeugte Energie, die
   Energiebilanz (Riemann-Summe über die saldierte Leistung am Energiemessgerät),
   sowie die bezogene (importierte) und die eingespeiste (exportierte) Energie,
@@ -304,8 +326,9 @@ Dann den Download-Knopf "csv" drücken.
 
 <!--
 Local IspellDict: german8
-LocalWords: pl load csv yield direct only Mon dist ac debug em mon stat
-LocalWords: bend avg hour verbose peff dc capacity spill feed min en
-LocalWords: lim comp excl charge discharge ceff seff ieff test tmy
-LocalWords:  data collect curb day week month season cron job
+LocalWords: pl load csv yield direct only Mon dist ac debug em mon stat Datetime
+LocalWords: bend avg hour verbose peff dc capacity spill feed min en lim comp
+LocalWords: excl charge discharge ceff seff ieff test tmy data collect curb day
+LocalWords: week month season cron job mdash
+LocalWords:
 -->

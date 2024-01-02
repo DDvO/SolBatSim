@@ -2,38 +2,44 @@
 
 ### Abstract
 
-Simulate own consumption with PV solar system, optionally with storage battery.
-[This Perl script](SolBatSim.pl) uses hourly solar yield data in CSV format,
-e.g., from [PVGIS](https://re.jrc.ec.europa.eu/pvg_tools/en/)
-and load profiles with a resolution of at least one hour (typically per minute).
-Optionally produces statistical data per hour/day/week/month in CSV format.
+Simulate own consumption of a household having a PV solar system,
+optionally with a storage battery for buffering currently unused energy.
 
-Optionally takes into account input limit and output crop of solar inverter.
+This simulator is implemented as a [Perl script](SolBatSim.pl) and thus can
+run on an system supporting Perl. It uses hourly solar yield data in CSV format,
+e.g., from [PVGIS](https://re.jrc.ec.europa.eu/pvg_tools/en/)
+and load profiles with a resolution of at least one hour (better: minute-based).
+It optionally produces statistical data per hour/day/week/month in CSV format.
+It optionally takes into account input limit and output crop of solar inverters.
+
 Various efficiency/loss parameters can be set freely, with reasonable defaults.
 Storage may be AC or DC coupled, with adjustable charge/discharge limits.
-Supports various charge/discharge strategies, including suboptimal ones.
+Various charge/discharge strategies are supported, including suboptimal ones.
 
 Due to its openness, flexibility, and (depending on input) realistic results,
-may be used as a reference for comparing PV simulations.
+this simulator may be used as a reference for comparing PV simulations.
 
 Load profiles may be taken from public sources such as [HTW Berlin](
 https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
 or obtained from a suitable local digital metering device.
 
-[This Perl script](3em_data_collect.pl)
-gathers the status data reported each second by a Shelly (Pro) 3EM energy meter.
+[This Perl script](3em_data_collect.pl) gathers the status data
+reported each second by a Shelly (Pro) 3EM energy meter.\
 It can also collect the PV status data reported each second by a Shelly Plus 1PM.
 In this case, the total load reported by the 3PM energy meter is corrected by
 adding the absolute value of the PV power input reported by the 1PM power meter.
-The script can save the per-second status data in a file per day,
-including a total load value obtained by adding the values of the three phases.
-It can also produce another file per day with one load value per second,
-a file per year with the average load per minute, and another file per year with
+* The script can save the per-second status data in a file per day, including a
+total load value obtained by summing up the load values of the three phases.
+* It can also produce another file per day with one load value per second,
+* a file per year with the average load per minute,
+  which is well suited as SolBatSim input file,
+* and another file per year with
 a record per hour of the energy consumption, production (if any), and balance,
 as well as the imported energy and exported energy, obtained by accumulating
 the positive/negative per-second total power values over the given hour.
-The script is robust against intermittently missing power data by interpolating
-the data over the range of seconds where no power measurement is available.
+
+The script is robust against intermittently missing power data, by interpolating
+the data over the range of seconds where no power measurement is available.\
 In order to cope with inadvertent abortion of script execution (e.g., due to
 system reboot), the script should be started automatically when not currently
 running, for instance using a Linux cron job that is triggered each minute.

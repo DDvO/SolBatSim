@@ -30,8 +30,9 @@ In this case, the total load reported by the 3PM energy meter is corrected by
 adding the absolute value of the PV power input reported by the 1PM power meter.
 * The script can save the per-second status data in a file per day, including a
 total load value obtained by summing up the load values of the three phases.
-* It can also produce another file per day with one load value per second,
-* a file per year with the average load per minute,
+* It can also produce another file per day with load and PV power per second,
+* a further file per day with one load value per second in a row per hour,
+* a file per year with the average load per minute in a row per hour,
   which is well suited as SolBatSim input file,
 * and another file per year with
 a record per hour of the energy consumption, production (if any), and balance,
@@ -103,6 +104,8 @@ Es kann folgende Daten abspeichern:
   für die drei Phasen und die saldierte Leistung,
   also die Summe der Leistungswerte über alle drei Phasen.
 * In einer Datei pro Tag alle Statusdaten je Sekunde aus dem PV-Daten-Messgerät.
+* In einer Datei pro Tag die Gesamt-Last, PV-Leistung (wenn vorhanden, sonst 0)
+  und die einzelnen Leistungswerte der drei Phasen je Sekunde.
 * In einer Datei pro Tag ein Lastprofil mit der saldierten Leistung je Sekunde.
 * In einer Datei pro Jahr ein Lastprofil mit einem Eintrag je Minute
   mit dem Durchschnitt der saldierten Leistungswerte über die Minute.

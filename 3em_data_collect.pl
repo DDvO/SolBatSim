@@ -7,8 +7,10 @@
 # In this case, the total load reported by the 3EM energy meter is corrected
 # by adding the absolute value of the PV power reported by the 1PM power meter.
 # Outputs data in the following files, each of which is optional:
-# * <base_name><energy_name>_<year>.csv energy consumed, produced, balance,
-#                                       imported and exported per hour
+# * <base_name><power_name>_<date>.csv  total load, any optional PV input,
+#                                       and the three phase powers per second
+# * <base_name><energy_name>_<year>.csv energy consumed, produced, own use,
+#                                       balance, imported and exported per hour
 # * <base_name><load_min>_<year>.csv  average load per minute, one line per hour
 # * <base_name><load_sec>_<date>.csv    load per second, one line per hour
 # * <base_name><status_name>_<date>.csv status of the three phases per second
@@ -26,7 +28,7 @@
 # day if the file containing the load values per second is available.
 #
 # CLI options, each of which may be a value or "" indicating none/default:
-# <base_name> <energy_name>
+# <base_name> <power_name> <energy_name>
 # <load_min> <load_sec> <status_name> <pvstat_name> <log_name> <time_zone>
 # <3em_addr> <1pm_addr> <3em_username> <3em_password> <1pm_user> <1pm_pass>
 #
@@ -47,6 +49,7 @@ use IO::Handle; # for flush
 
 my $i = 0;
 my $out_prefix   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_BASENAME}; # e.g., ~/3EM_
+my $out_power    = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_POWER};    # per second
 my $out_energy   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_ENERGY};   # per hour
 my $out_load_min = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOAD_MIN}; # per minute
 my $out_load_sec = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOAD_SEC}; # per second
@@ -138,6 +141,7 @@ my ($load_min, $LM);
 my ($load_sec, $LS);
 my ($status, $SO);
 my ($pvstat, $PO);
+my ($powers, $PW);
 my ($log, $LOG);
 # preliminary log:
 sub log_name { return out_name($out_log, $_[0], ".txt"); }
@@ -155,6 +159,7 @@ sub do_after_day {
     close $LS if defined $LS;
     close $SO if defined $SO;
     close $PO if defined $PO;
+    close $PW if defined $PW;
 }
 
 sub do_after_year {
@@ -337,7 +342,7 @@ my $prev_pv_power = 0;
 log_msg("start - will connect to $url".($url_1pm ? " and $url_1pm" : ""));
 
 # try recover data from any previous run
-# TODO maybe add recovery also for $out_load_min or $out_stat
+# TODO maybe add recovery also from $out_power, $out_load_min or $out_stat
 my $cannot_recover = "cannot recover earlier data for the current hour";
 if ($out_load_sec) {
     my $load_sec = out_name($out_load_sec, $date, ".csv");
@@ -411,7 +416,6 @@ if ($out_load_sec) {
                 ."energy sums: consumed $energy_consumed_this_hour, "
                 ."produced $energy_produced_this_hour, "
                 ."balance $energy_balanced_this_hour, "
-                ."produced $energy_produced_this_hour, "
                 ."imported $energy_imported_this_hour, "
                 ."exported $energy_exported_this_hour\n"
                 if $debug && $addr_1pm && $i > $n - 10;
@@ -465,9 +469,11 @@ sub do_before_day {
     $load_sec = out_name($out_load_sec, $date_3em_out, ".csv");
     $status = out_name($out_stat, $date_3em_out, ".csv");
     $pvstat = out_name($out_pvstat, $date_3em_out, ".csv");
+    $powers = out_name($out_power , $date_3em_out, ".csv");
     open($LS,'>>',$load_sec) || die "cannot open '$load_sec' for appending: $!";
     open($SO, '>>', $status) || die "cannot open '$status' for appending: $!";
     open($PO, '>>', $pvstat) || die "cannot open '$pvstat' for appending: $!";
+    open($PW, '>>', $powers) || die "cannot open '$powers' for appending: $!";
 
     # no header for load output CSV file
     print $SO "time [$tz],PV power [W],total_power [W],".
@@ -478,6 +484,9 @@ sub do_before_day {
     print $PO "time [$tz],PV power [W],".
         "voltage [V],current [A],total [Wh],temperature [°C]\n"
         if -z $pvstat; # on empty pv output CSV file, add header
+    print $PW "time [$tz],load [W], PV power [W],".
+        "powerA [W],powerB [W],powerC [W]\n"
+        if -z $powers; # on empty power output CSV file, add header
 }
 
 sub do_before_hour {
@@ -523,6 +532,15 @@ sub do_each_second {
     my $pvpower = $pv_power ? sprintf("%5.1f", $pv_power) : "    0";
     print $SO "$time_3em_out,$pvpower,".sprintf("%+6.2f", $power)."$data\n";
     print $PO "$time_3em_out,$pvpower$pv_data\n";
+    if ($data ne "") {
+        my @dat = (split ",", $data);
+        $data =
+            ",".sprintf("%6.2f", $dat[1]).
+            ",".sprintf("%6.2f", $dat[7]).
+            ",".sprintf("%6.2f", $dat[13]);
+    }
+    my $date_time_out = $date_3em_out.$date_time_sep_out.$time_3em_out;
+    print $PW "$date_time_out,".sprintf("%7.2f", $load).",$pvpower$data\n";
 
     if (!$first && $time_3em =~/:59$/) { # end of each minute
         print $LM ",".round($load_sum_minute / SECONDS_PER_MINUTE);
@@ -532,10 +550,11 @@ sub do_each_second {
         $LS->flush();
         $SO->flush();
         $PO->flush();
+        $PW->flush();
 
         if ($time_3em =~/59:59$/) { # at end of each hour
             printf $EO
-                "$date_3em_out$date_time_sep_out$time_3em_out,%d,%d,%d,%d,%d\n",
+                "$date_time_out,%d,%d,%d,%d,%d\n",
                 round($energy_consumed_this_hour / SECONDS_PER_HOUR),
                 round($energy_produced_this_hour / SECONDS_PER_HOUR),
                 round($energy_balanced_this_hour / SECONDS_PER_HOUR),

@@ -21,13 +21,22 @@ this simulator may be used as a reference for comparing PV simulations.
 
 Load profiles may be taken from public sources such as [HTW Berlin](
 https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
-or obtained from a suitable local digital metering device.
+or obtained locally using a suitable local digital metering device,
+such as a digital 'smart meter' or a Shelly (Pro) 3EM energy meter.
+The home automation software [Home Assistant](https://www.home-assistant.io/),
+which may continuously run on a micro controller or a home server.
+With the definitions in [this YAML configuration file](configuration.yaml),
+it can produce both a per-minute load and PV power profile and a per-second
+protocol, which may be post-processed with the following Perl script.
 
 [This Perl script](3em_data_collect.pl) gathers the status data
 reported each second by a Shelly (Pro) 3EM energy meter.\
 It can also collect the PV status data reported each second by a Shelly Plus 1PM.
 In this case, the total load reported by the 3PM energy meter is corrected by
-adding the absolute value of the PV power input reported by the 1PM power meter.
+adding the absolute value of the PV power input reported by the 1PM power meter.\
+Alternatively,
+it takes its input from per-second load and (optional) PV power data obtained,
+e.g., using Home Assistant with [configuration.yaml](configuration.yaml).
 * The script can save the per-second status data in a file per day, including a
 total load value obtained by summing up the load values of the three phases.
 * It can also produce another file per day with load and PV power per second,
@@ -94,11 +103,23 @@ Lastprofil-Dateien sollten folgendes Format haben:
   &mdash; es wird ohnehin auf den Jahresverbrauch skaliert,
   den man getrennt angeben muss.
 
+Lastprofile des eigenen Haushalts können mit geeigneten digitalen Stromzählern
+erzeugt werden oder mit einem Energiemessgeräts wie dem Shelly (Pro) 3EM und der
+Hausautomatisierungs-Software [Home Assistant](https://www.home-assistant.io/),
+welche z.B. auf einem Mikrocontroller oder einem Heimserver ständig laufen kann.
+Mit Hilfe der Definitionen in [dieser YAML-Konfiguration](configuration.yaml)
+kann sowohl ein minutenweises Ertrags- und Lastprofil erzeugt werden als auch
+ein sekundenweises Protokoll der Lastdaten und ggf. der PV-Erzeugungsleistung,
+welches dann mit dem folgenden Skript weiter verarbeitbar ist.
+
 [Dieses Perl-Skript](3em_data_collect.pl​) liest die sekündlichen Status-Daten
 eines Energiemessgeräts Shelly (Pro) 3EM kontinuierlich aus. Es kann sie mit den
 Status-Daten eines Shelly Plus 1PM verknüpfen, der die Leistung einer kleinen
 PV-Anlage misst, indem es als Haushalts-Last die Summe aus der saldierten
-Leistung am Energiemessgerät und dem Absolutbetrag der PV-Leistung bildet.
+Leistung am Energiemessgerät und dem Absolutbetrag der PV-Leistung bildet.\
+Alternativ verarbeitet es als Eingabe
+sekündliche Last- und ggf. PV-Leistungsdaten, die z.B. vom Home Assistant
+mit [configuration.yaml](configuration.yaml) erzeugt wurden.\
 Es kann folgende Daten abspeichern:
 * In einer Datei pro Tag alle Statusdaten je Sekunde aus dem Energiemessgerät
   für die drei Phasen und die saldierte Leistung,
@@ -338,6 +359,6 @@ Local IspellDict: german8
 LocalWords: pl load csv yield direct only Mon dist ac debug em mon stat Datetime
 LocalWords: bend avg hour verbose peff dc capacity spill feed min en lim comp
 LocalWords: excl charge discharge ceff seff ieff test tmy data collect curb day
-LocalWords: week month season cron job mdash
+LocalWords: week month season cron job mdash configuration yaml
 LocalWords:
 -->

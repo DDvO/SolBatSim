@@ -1,0 +1,315 @@
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+homeassistant: # https://www.home-assistant.io/blog/2015/05/09/utc-time-zone-awareness/
+  time_zone: CET # Europe/Berlin without DST adaptations
+
+script:   !include scripts.yaml
+scene:    !include scenes.yaml
+template: !include template.yaml
+
+
+# sensor: !include sensor.yaml
+sensor:
+  - platform: template # https://www.home-assistant.io/integrations/template/
+    sensors:           # needed for Riemann sums (integrations) below
+
+    # abstractions from Shelly peculiarities, needed also for Riemann sums
+
+      power_balance:
+        friendly_name: "Power Balance at distribution box"
+        device_class: power
+        unit_of_measurement: 'W'
+        value_template: >-
+          {{ states('sensor.shelly3em_channel_a_power')|float
+           + states('sensor.shelly3em_channel_b_power')|float
+           + states('sensor.shelly3em_channel_c_power')|float }}
+
+# adding such a derived sensor would be inefficient, see
+# https://www.shelly-support.eu/forum/thread/8977-shelly-3em-phasen-saldieren-in-home-assistant/?postID=218747#post218747
+#     power_phases:
+#       friendly_name: "Power Phases at distribution box"
+#       value_template: >-
+#         {{ ',%6.2f' % (states('sensor.shelly3em_channel_a_power')|float) }}{{
+#            ',%6.2f' % (states('sensor.shelly3em_channel_b_power')|float) }}{{
+#            ',%6.2f' % (states('sensor.shelly3em_channel_c_power')|float) }}
+
+      # reports 0 if power production or the respective sensor is not available
+      # reports 0 if abs(value) < 1 because Shelly Plus 1PM always reports power >= 0.7 W
+      power_production:
+        friendly_name: "Power Production at micro inverter"
+        device_class: power
+        unit_of_measurement: 'W'
+        value_template: >-
+          {% set value = states('sensor.shelly1pm_power')|float(0) %}
+          {{ value if value >= 1 else -value if value <= -1 else 0 }}
+
+
+    # further derived values needed for Riemann sums
+
+      power_import:  # on power_balance > 0
+        friendly_name: "Power Import"
+        device_class: power
+        unit_of_measurement: 'W'
+        value_template: >-
+          {{ max([0, states('sensor.power_balance')|float]) }}
+
+      power_export:  # on power_balance < 0
+        friendly_name: "Power Export"
+        device_class: power
+        unit_of_measurement: 'W'
+        value_template: >-
+          {{ max([0, 0 - states('sensor.power_balance')|float]) }}
+
+      power_consumption:
+        friendly_name: "Power Consumption"
+        device_class: power
+        unit_of_measurement: 'W'
+        value_template: >-
+          {{ states('sensor.power_balance')|float + states('sensor.power_production')|float }}
+
+#     # workaround for former issue with power production sensor, leading to yields unavailable untility_metervalue with unknown meaturement unit
+#     energy0_production_hourly:
+#       friendly_name: "Energy Production Hourly (workaround)"
+#       device_class: energy
+#       unit_of_measurement: 'kWh'
+#       value_template: >-
+#         {{ states('sensor.energy_consumption_hourly')|float(0) - states('sensor.energy_balance_hourly')|float(0) }}
+#
+#     # workaround for energy export data not always available
+#     energy0_export_hourly:
+#       friendly_name: "Energy Export Hourly (workaround)"
+#       device_class: energy
+#       unit_of_measurement: 'kWh'
+#       value_template: >-
+#         {{ states('sensor.energy_import_hourly')|float(0) - states('sensor.energy_balance_hourly')|float(0) }}
+
+  # https://www.home-assistant.io/integrations/integration/
+  # Riemann sums of power values (W) yielding energy (kWh)
+
+  - name: energy_balance_sum
+    source: sensor.power_balance
+    platform: integration
+    unit_prefix: k
+    round: 3  # number of digits after comma on output (reading the sum value)
+    method: left
+
+  - name: energy_import_sum
+    source: sensor.power_import
+    platform: integration
+    unit_prefix: k
+    round: 3
+    method: left
+
+  - name: energy_export_sum
+    source: sensor.power_export
+    platform: integration
+    unit_prefix: k
+    round: 3
+    method: left
+
+  - name: energy_consumption_sum
+    source: sensor.power_consumption
+    platform: integration
+    unit_prefix: k
+    round: 3
+    method: left
+
+  - name: energy_production_sum
+    source: sensor.power_production
+    platform: integration
+    unit_prefix: k
+    round: 3
+    method: left
+
+utility_meter: # https://www.home-assistant.io/integrations/utility_meter/
+# energy accumulators that are reset per hour, day, month, or year
+
+  energy_balance_hourly:
+    name: Energy Balance Hourly
+    source: sensor.energy_balance_sum
+    net_consumption: true
+    cycle: hourly
+  energy_balance_daily:
+    name: Energy Balance Daily
+    source: sensor.energy_balance_sum
+    net_consumption: true
+    cycle: daily
+  energy_balance_monthly:
+    name: Energy Balance Monthly
+    source: sensor.energy_balance_sum
+    net_consumption: true
+    cycle: monthly
+  energy_balance_yearly:
+    name: Energy Balance Yearly
+    source: sensor.energy_balance_sum
+    net_consumption: true
+    cycle: yearly
+
+  energy_import_hourly:
+    name: Energy Import Hourly
+    source: sensor.energy_import_sum
+    cycle: hourly
+  energy_import_daily:
+    name: Energy Import Daily
+    source: sensor.energy_import_sum
+    cycle: daily
+  energy_import_monthly:
+    name: Energy Import Monthly
+    source: sensor.energy_import_sum
+    cycle: monthly
+  energy_import_yearly:
+    name: Energy Import Yearly
+    source: sensor.energy_import_sum
+    cycle: yearly
+
+  energy_export_hourly:
+    name: Energy Export Hourly
+    source: sensor.energy_export_sum
+    cycle: hourly
+  energy_export_daily:
+    name: Energy Export Daily
+    source: sensor.energy_export_sum
+    cycle: daily
+  energy_export_monthly:
+    name: Energy Export Monthly
+    source: sensor.energy_export_sum
+    cycle: monthly
+  energy_export_yearly:
+    name: Energy Export Yearly
+    source: sensor.energy_export_sum
+    cycle: yearly
+
+  energy_consumption_hourly:
+    name: Energy Consumption Hourly
+    source: sensor.energy_consumption_sum
+    cycle: hourly
+  energy_consumption_daily:
+    name: Energy Consumption Daily
+    source: sensor.energy_consumption_sum
+    cycle: daily
+  energy_consumption_monthly:
+    name: Energy Consumption Monthly
+    source: sensor.energy_consumption_sum
+    cycle: monthly
+  energy_consumption_yearly:
+    name: Energy Consumption Yearly
+    source: sensor.energy_consumption_sum
+    cycle: yearly
+
+  energy_production_hourly:
+    name: Energy Production Hourly  # Statistic id is derived from this: sensor.energy_production_hourly
+    source: sensor.energy_production_sum
+    net_consumption: true
+    cycle: hourly
+  energy_production_daily:
+    name: Energy Production Daily
+    source: sensor.energy_production_sum
+    net_consumption: true
+    cycle: daily
+  energy_production_monthly:
+    name: Energy Production Monthly
+    source: sensor.energy_production_sum
+    net_consumption: true
+    cycle: monthly
+  energy_production_yearly:
+    name: Energy Production Yearly
+    source: sensor.energy_production_sum
+    net_consumption: true
+    cycle: yearly
+
+
+notify: # https://www.home-assistant.io/integrations/file/
+
+  - name: power_data
+    platform: file
+    filename: power.csv
+    # timestamp: true
+    services:
+
+  - name: energy_data
+    platform: file
+    filename: energy.csv
+
+shell_command: # https://www.home-assistant.io/integrations/shell_command/  "When using templates, shell_command runs in a more secure environment ..."
+# changes require HA restart, otherwise:  Error executing script. Service not found for call_service at pos N: Unable to find service shell_command.XYZ
+
+# https://community.home-assistant.io/t/file-notification-component-any-way-to-dynamically-create-file-name/113062/11
+  rename_power_by_date:   "mv -n power.csv   {{ (as_timestamp(now()) - 60) | timestamp_custom('power_%Y-%m-%d.csv') }}"
+  rename_energy_by_year:  "mv -n energy.csv  {{ (as_timestamp(now()) - 60) | timestamp_custom('energy_%Y.csv') }}"
+# test: echo 'ok' > /config/t.txt
+
+
+# automation: !include automations.yaml
+automation:
+
+  # at the end of each day, split and name power output file per day
+  - id: run_rename_power_by_date
+    initial_state: true
+    trigger:
+      - platform: time
+        at: '23:59:59'
+    action:
+      - service: shell_command.rename_power_by_date
+#     - service: shell_command.test
+
+  # at the end of each year, split and name energy output file per year
+  - id: run_rename_energy_by_year
+    initial_state: true
+    trigger:
+      - platform: time
+        at: '23:59:59'
+    condition:
+      - condition: template
+        value_template: "{{ now().month == 12 and now().day == 31 }}"
+    action:
+      - service: shell_command.rename_energy_by_year
+
+
+  # generate state output per second with power consumption, production, and per each of the three phases
+  - id: power_data_to_file
+    initial_state: true
+    trigger:
+      - platform: time_pattern
+        seconds: "/1"
+    action:
+      - variables: # https://www.home-assistant.io/docs/scripts/#variables
+          time: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        # cons: "{{ states('sensor.power_consumption'        )|float }}"
+          prod: "{{ states('sensor.power_production'         )|float }}"
+          powA: "{{ states('sensor.shelly3em_channel_a_power')|float }}"
+          powB: "{{ states('sensor.shelly3em_channel_b_power')|float }}"
+          powC: "{{ states('sensor.shelly3em_channel_c_power')|float }}"
+          # unavailable values intentionally lead to missing output line
+      - service: notify.power_data
+        data_template: # time zone: %z
+          message: "{{time}},{{
+                      '%7.2f' % (prod + powA + powB + powC) }},{{
+                      '%5.1f' % (prod) if prod != 0 else '    0' }},{{
+                      '%7.2f' % (powA) }},{{
+                      '%7.2f' % (powB) }},{{
+                      '%7.2f' % (powC) }}"
+          # not using 'cons' above to avoid potential inconsistencies with earlier values of 'powA' etc.
+
+  # generate statistics output per hour with energy consumption, production, balance, import, and export
+  - id: energy_data_to_file
+    trigger:
+      - platform: time_pattern
+        minutes: 59
+        seconds: 59
+    action:
+      - variables:
+          time: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+          cons: "{{ ',%4d' % (1000 * states('sensor.energy_consumption_hourly')|float) }}"
+          prod: "{{ ',%4d' % (1000 * states('sensor.energy_production_hourly' )|float) }}"
+          bal:  "{{ ',%4d' % (1000 * states('sensor.energy_balance_hourly'    )|float) }}"
+          imp:  "{{ ',%4d' % (1000 * states('sensor.energy_import_hourly'     )|float) }}"
+          exp:  "{{ ',%4d' % (1000 * states('sensor.energy_export_hourly'     )|float) }}"
+          # unavailable values intentionally lead to missing output line
+      - service: notify.energy_data
+        data_template:
+          message: "{{time}}{{cons}}{{prod}}{{bal}}{{imp}}{{exp}}"

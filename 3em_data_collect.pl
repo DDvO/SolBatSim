@@ -1,11 +1,15 @@
 #!/usr/bin/perl
 
-# Collect status data reported each second by a Shelly (Pro) 3EM energy meter.
-# Uses the http://<addr>/status endpoint (yet so far not the MQTT interface).
-# Optionally collect also PV status data reported each second by Shelly Plus 1PM
-# using the http://<addr_1pm>/rpc/Shelly.GetStatus endpoint but so far not MQTT.
+# Collect status data reported each second by a Shelly (Pro) 3EM energy meter,
+# using the http://<addr>/status endpoint (yet not the MQTT interface) and
+# optionally collecting PV status data reported each second by Shelly Plus 1PM
+# using the http://<addr_1pm>/rpc/Shelly.GetStatus endpoint but not MQTT.
 # In this case, the total load reported by the 3EM energy meter is corrected
 # by adding the absolute value of the PV power reported by the 1PM power meter.
+#
+# Alternatively, take as input per-second load and (optional) PV power data
+# obtained, e.g., using Home Assistant. In this case, <3em_addr> must be '-'.
+#
 # Outputs data in the following files, each of which is optional:
 # * <base_name><power_name>_<date>.csv  total load, any optional PV input,
 #                                       and the three phase powers per second
@@ -30,7 +34,8 @@
 # CLI options, each of which may be a value or "" indicating none/default:
 # <base_name> <power_name> <energy_name>
 # <load_min> <load_sec> <status_name> <pvstat_name> <log_name> <time_zone>
-# <3em_addr> <1pm_addr> <3em_username> <3em_password> <1pm_user> <1pm_pass>
+# - |(<3em_addr> <1pm_addr> <3em_username> <3em_password> <1pm_user> <1pm_pass>)
+# where '-' means that data shall be read from subsequent file(s) or STDIN.
 #
 # Alternatively to providing options at the CLI, they may also be given
 # via environment variables, which is advisable for sensitive passwords.
@@ -67,16 +72,57 @@ my $time_format        = "%H:%M:%S";
 my $time_format_out    = $ENV{Shelly_3EM_OUT_TIME_FORMAT} || $time_format;
 my $format_out = $date_format_out.$date_time_sep_out.$time_format_out;
 
-my $addr     = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR}; # e.g. 192.168.178.123
-my $addr_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_ADDR}; # e.g. 192.168.124;
-   $addr_1pm = 0 if $addr_1pm eq "";
-my $url      = "http://$addr/status";
-my $url_1pm  = "http://$addr_1pm/rpc/Shelly.GetStatus" if $addr_1pm;
+my (@times, @loads, @ppowers, @phases);
+my $item = -1;
+sub may_fill_last_sec {
+    my $n = $#times;
+    return if $n < 0;
+    $times[$n] =~ m/^([^\s]+) (23:59:59)?/;
+    return if defined $2;
+    push @times  , "$1 23:59:59";
+    push @loads  , $loads  [$n];
+    push @ppowers, $ppowers[$n];
+    push @phases , $phases [$n];
 
-my $user     = $ARGV[$i++] || $ENV{Shelly_3EM_USER}; # HTTP user name, if needed
-my $pass     = $ARGV[$i++] || $ENV{Shelly_3EM_PASS}; # HTTP password, if needed
-my $user_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_USER} || $user;
-my $pass_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_PASS} || $pass;
+}
+my $addr = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR}; # e.g. 192.168.178.123
+my ($addr_1pm, $url, $url_1pm, $user, $pass, $user_1pm, $pass_1pm);
+if ($addr eq "-") {
+    # read from power.csv file produced by Home Assistant configuration.yaml
+    splice(@ARGV,0,$i);
+    while(<>) {
+        chomp;
+        my @elems = (split ",", $_);
+        if ($#elems == 5) {
+            my ($time, $load, $pv, $phA, $phB, $phC) = @elems;
+            may_fill_last_sec() if $time =~ m/^([^\s])+ 00:00:00$/;
+            push @times  , $time;
+            push @loads  , $load;
+            push @ppowers, $pv;
+            push @phases , "$phA,$phB,$phC";
+            ++$item;
+            my $sum = $pv + $phA + $phB + $phC;
+            print("at $time, load $load is not consistent with ".
+                  sprintf("%7.2f", $sum)." = sum of phases ".
+                  "$phA + $phB + $phC and PV production $pv")
+                unless abs($load - $sum) <= 0.01;
+        } else {
+            print "ignoring input line: $_\n";
+        }
+    }
+    may_fill_last_sec() if $#times >= 0;
+    $item = -1;
+} else {
+    $addr_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_ADDR}; # e.g. 192.168.124;
+    $addr_1pm = 0 if $addr_1pm eq "";
+    $url      = "http://$addr/status";
+    $url_1pm  = "http://$addr_1pm/rpc/Shelly.GetStatus" if $addr_1pm;
+
+    $user     = $ARGV[$i++] || $ENV{Shelly_3EM_USER}; # HTTP username, if needed
+    $pass     = $ARGV[$i++] || $ENV{Shelly_3EM_PASS}; # HTTP password, if needed
+    $user_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_USER} || $user;
+    $pass_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_PASS} || $pass;
+}
 
 my $debug = $ENV{Shelly_3EM_DEBUG} // 0;
 my $test_extra_power = $ENV{Shelly_3EM_EXTRA} // 0;
@@ -149,7 +195,9 @@ $log = log_name($start->strftime("%Y"));
 open($LOG,'>>', $log) || die "cannot open '$log' for appending: $!";
 
 sub log_msg {
-    my $msg = "$date $time: $_[0]\n";
+    my $tim = $addr eq "-" && defined $times[$item] ? $times[$item]
+        : "$date $time";
+    my $msg = "$tim: $_[0]\n";
     print $msg;
     print $LOG $msg if defined $LOG;
 }
@@ -216,6 +264,12 @@ sub http_get {
 
 my $last_valid_unixtime = 0;
 sub get_3em {
+    if ($addr eq "-") {
+        print "$times[$item],$loads[$item],$phases[$item]\n" if $debug;
+        my $dt = parse_datetime($times[$item]);
+        return ($dt->epoch, $loads[$item], $phases[$item]);
+    }
+
     my ($check_time) = @_;
 
   retry:
@@ -288,6 +342,11 @@ sub get_3em {
 }
 
 sub get_1pm {
+    if ($addr eq "-") {
+        my $dt = parse_datetime($times[$item]);
+        return ($dt->epoch, $ppowers[$item], "");
+    }
+
     my ($timestamp) = @_;
     my ($unixtime, $power, $data) = (0, 0, ""); # default: no current data
 
@@ -339,12 +398,13 @@ my ($prev_power, $prev_timestamp) = (0, 0); # may include PV power
 # my $prev = "";
 my $prev_pv_power = 0;
 
-log_msg("start - will connect to $url".($url_1pm ? " and $url_1pm" : ""));
+log_msg("start - will connect to $url".($url_1pm ? " and $url_1pm" : ""))
+    unless $addr eq "-";
 
 # try recover data from any previous run
 # TODO maybe add recovery also from $out_power, $out_load_min or $out_stat
 my $cannot_recover = "cannot recover earlier data for the current hour";
-if ($out_load_sec) {
+if ($addr ne "-" && $out_load_sec) {
     my $load_sec = out_name($out_load_sec, $date, ".csv");
     if (open(my $LS, '<' ,$load_sec)) {
         my $prev_second = 0;
@@ -431,7 +491,7 @@ if ($out_load_sec) {
     } else {
         log_warn("no previouly produced high-resolution load file '$load_sec' found, so $cannot_recover");
     }
-} else {
+} elsif ($addr ne "-") {
     log_warn("as no high-resolution load file <load_sec> is defined, $cannot_recover");
 }
 
@@ -534,10 +594,11 @@ sub do_each_second {
     print $PO "$time_3em_out,$pvpower$pv_data\n";
     if ($data ne "") {
         my @dat = (split ",", $data);
+        my $inc = $#dat == 3 ? 1 : 6;
         $data =
             ",".sprintf("%6.2f", $dat[1]).
-            ",".sprintf("%6.2f", $dat[7]).
-            ",".sprintf("%6.2f", $dat[13]);
+            ",".sprintf("%6.2f", $dat[1 + $inc]).
+            ",".sprintf("%6.2f", $dat[1 + $inc * 2]);
     }
     my $date_time_out = $date_3em_out.$date_time_sep_out.$time_3em_out;
     print $PW "$date_time_out,".sprintf("%7.2f", $load).",$pvpower$data\n";
@@ -581,6 +642,7 @@ use Time::HiRes qw(usleep);
 # re-calculate due to potenital delays recovering data from any previous run:
 $start = DateTime->now(time_zone => $tz);
 do {
+    goto end if $addr eq "-" && ++$item > $#times;
     my $first = $count_seconds == 0;
     my ($timestamp, $power, $data) = get_3em($first); # may include PV power
     $power += $test_extra_power;
@@ -626,10 +688,14 @@ do {
     $prev_power = $power;
     $prev_timestamp = $timestamp;
     # $prev = $time;
-    usleep(700000); # 0.7 secs; each iteration otherwise takes about .2 seconds
+    usleep(700000) # 0.7 secs; each iteration otherwise takes about .2 seconds
+        unless $addr eq "-";
     ($date, $time) = date_time_now();
 } while(1);
 # while ($count_seconds < MAX_SECONDS); # stop after 1 day at the latest
 # while $time ge $prev # not yet wrap around at 24:00:00
 #     && $time lt $end_time;
-# cleanup();
+
+ end:
+--$item;
+cleanup();

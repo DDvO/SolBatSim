@@ -62,6 +62,7 @@ my $date_time_sep      = " "; # "T";
 my $date_time_sep_out  = $ENV{Shelly_3EM_OUT_DATE_TIME_SEP} || $date_time_sep;
 my $time_format        = "%H:%M:%S";
 my $time_format_out    = $ENV{Shelly_3EM_OUT_TIME_FORMAT} || $time_format;
+my $format_out = $date_format_out.$date_time_sep_out.$time_format_out;
 
 my $addr     = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR}; # e.g. 192.168.178.123
 my $addr_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_ADDR}; # e.g. 192.168.124;
@@ -104,13 +105,18 @@ my ($date, $time) = date_time($start);
 # $end_time = "24:00:00" if $end_time eq "00:00:00";
 
 # https://stackoverflow.com/questions/7486470/how-to-parse-a-string-into-a-datetime-object-in-perl
+my $parse_err;
+# moving var into sub would lead to: Variable "$parse_err" will not stay shared
 sub parse_datetime {
     use DateTime::Format::Strptime;
+    my $in = "$_[0] $tz";
+    $parse_err = "cannot parse date+time '$in' w.r.t. pattern '$format_out %Z'";
+    sub die_err { die($parse_err); }
     my $time_parser = DateTime::Format::Strptime->new(
-        pattern => $date_format_out.$date_time_sep_out.$time_format_out.' %Z',
-        on_error => 'croak',
-        );
-    return $time_parser->parse_datetime("$_[0] $tz");
+        pattern => "$format_out %Z",
+        on_error => \&die_err,
+    );
+    return $time_parser->parse_datetime($in);
 }
 
 sub time_epoch { return DateTime->from_epoch(epoch => $_[0], time_zone => $tz);}

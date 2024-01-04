@@ -126,6 +126,22 @@ sensor:
     round: 3
     method: left
 
+  # Riemann sums of power values (W) yielding energy (Ws)
+
+  - name: power_consumption_sum
+    source: sensor.power_consumption
+    platform: integration
+    unit_time: s  # leads to wrong warning, see https://github.com/home-assistant/core/issues/107223
+    round: 2
+    method: left
+
+  - name: power_production_sum
+    source: sensor.power_production
+    platform: integration
+    unit_time: s  # leads to wrong warning, see https://github.com/home-assistant/core/issues/107223
+    round: 2
+    method: left
+
 utility_meter: # https://www.home-assistant.io/integrations/utility_meter/
 # energy accumulators that are reset per hour, day, month, or year
 
@@ -222,6 +238,15 @@ utility_meter: # https://www.home-assistant.io/integrations/utility_meter/
     net_consumption: true
     cycle: yearly
 
+  energy_consumption_minutely:
+    name: Energy Consumption Minutely
+    source: sensor.power_consumption_sum
+    cron: "* * * * *"
+  energy_production_minutely:
+    name: Energy Production Minutely
+    source: sensor.power_production_sum
+    cron: "* * * * *"
+
 
 notify: # https://www.home-assistant.io/integrations/file/
 
@@ -235,14 +260,21 @@ notify: # https://www.home-assistant.io/integrations/file/
     platform: file
     filename: energy.csv
 
+  - name: profile_data
+    platform: file
+    filename: profile.csv
+
 shell_command: # https://www.home-assistant.io/integrations/shell_command/  "When using templates, shell_command runs in a more secure environment ..."
 # changes require HA restart, otherwise:  Error executing script. Service not found for call_service at pos N: Unable to find service shell_command.XYZ
 
 # https://community.home-assistant.io/t/file-notification-component-any-way-to-dynamically-create-file-name/113062/11
   rename_power_by_date:   "mv -n power.csv   {{ (as_timestamp(now()) - 60) | timestamp_custom('power_%Y-%m-%d.csv') }}"
   rename_energy_by_year:  "mv -n energy.csv  {{ (as_timestamp(now()) - 60) | timestamp_custom('energy_%Y.csv') }}"
-# test: echo 'ok' > /config/t.txt
+  rename_profile_by_year: "mv -n profile.csv {{ (as_timestamp(now()) - 60) | timestamp_custom('profile_%Y.csv') }}"
 
+# failed attempts to append msg to profile without line break (newline) at msg end:
+# append_to_profile:       echo -n >>profile.csv msg  # does nothing if 'msg' is replaced by parameter '{{msg}}'
+# append_to_profile:       touch {{msg}}.csv          # test command - this correctly expands '{{msg}}' to 'test'
 
 # automation: !include automations.yaml
 automation:
@@ -255,7 +287,6 @@ automation:
         at: '23:59:59'
     action:
       - service: shell_command.rename_power_by_date
-#     - service: shell_command.test
 
   # at the end of each year, split and name energy output file per year
   - id: run_rename_energy_by_year
@@ -268,6 +299,18 @@ automation:
         value_template: "{{ now().month == 12 and now().day == 31 }}"
     action:
       - service: shell_command.rename_energy_by_year
+
+  # at the end of each year, split and name profile output file per year
+  - id: run_rename_profile_by_year
+    initial_state: true
+    trigger:
+      - platform: time
+        at: '23:59:59'
+    condition:
+      - condition: template
+        value_template: "{{ now().month == 12 and now().day == 31 }}"
+    action:
+      - service: shell_command.rename_profile_by_year
 
 
   # generate state output per second with power consumption, production, and per each of the three phases
@@ -313,3 +356,24 @@ automation:
       - service: notify.energy_data
         data_template:
           message: "{{time}}{{cons}}{{prod}}{{bal}}{{imp}}{{exp}}"
+
+  # generate load and PV profile with one line per minute containing average power values (W)
+  - id: profile_data_to_file
+    initial_state: true
+    trigger:
+      - platform: time_pattern
+        seconds: 59
+#       seconds: '*'
+    action:
+# failed attempts to append msg to profile without line break (newline) at msg end:
+#     - service: shell_command.append_to_profile
+#       data:
+#         msg: "{{ 'test' }}"
+      - variables:
+          time: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+          cons: "{{ ',%7.2f' % (states('sensor.energy_consumption_minutely')|float / 60) }}"
+          prod: "{{ ',%7.2f' % (states('sensor.energy_production_minutely' )|float / 60) }}"
+          # unavailable values intentionally lead to missing output line
+      - service: notify.profile_data
+        data_template:
+          message: "{{time}}{{cons}}{{prod}}"

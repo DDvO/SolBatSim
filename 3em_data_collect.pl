@@ -615,7 +615,7 @@ sub do_each_second {
 
         if ($time_3em =~/59:59$/) { # at end of each hour
             printf $EO
-                "$date_time_out,%d,%d,%d,%d,%d\n",
+                "$date_time_out,%4d,%4d,%4d,%4d,%4d\n",
                 round($energy_consumed_this_hour / SECONDS_PER_HOUR),
                 round($energy_produced_this_hour / SECONDS_PER_HOUR),
                 round($energy_balanced_this_hour / SECONDS_PER_HOUR),

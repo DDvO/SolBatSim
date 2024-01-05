@@ -207,8 +207,8 @@ näher behandelten Lade- und Entladestrategien gewählt werden:
 - Ladestrategie (solange die definierte Maximalladung nicht erreicht ist):
   - Lastvorrang, auch *Überschussladung* genannt (optimal):
     Speicherung der aktuell nicht anderweitig gebrauchten PV-Energie
-  - vorrangige Speicherung (ohne Berücksichtigung der Last),
-    wobei wahlweise Strom auch teils am Speicher vorbei geleitet werden kann:
+  - vorrangige Speicherung (ohne Berücksichtigung der Last), wobei wahlweise
+    Strom auch teils am Speicher vorbei geleitet werden kann (Bypass):
     - für Überschuss, der nicht mehr in den Speicher passt, und/oder
     - für eine konstante PV-Nettoleistung
 - Entladestrategie (solange die definierte Minimalladung nicht erreicht ist):

@@ -2134,7 +2134,7 @@ if (defined $capacity) {
         ." $due_to $seff_txt ".percent($storage_eff)."%\n";
     print "$coupl_loss_txt $en3 $en1 ".($AC_coupled ? "$de2" : "")."=".
        kWh($coupling_loss)." $due_to $ieff2_txt ".percent($inverter2_eff)."%\n";
-    print "$PV_discarded_txt $en4$     =".
+    print "$PV_discarded_txt $en4     =".
         kWh($PV_net_discarded_sum)."\n" if $excl_feed;
     print "$own_storage_txt $en2   =".kWh($PV_used_via_storage)."\n";
     print "$dis_feed_txt$en4=".kWh($dis_feed_sum)."\n";

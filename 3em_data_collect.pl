@@ -131,6 +131,9 @@ my $test_extra_pv_power = $ENV{Shelly_1PM_EXTRA} // 0;
 die "missing CLI argument or env. variable 'Shelly_3EM_ADDR'"   unless $addr;
 die "missing CLI argument or env. variable 'Shelly_3EM_OUT_TZ'" unless $tz;
 
+# deliberately not using any extra packages like Math
+sub min { return $_[0] < $_[1] ? $_[0] : $_[1]; }
+sub max { return $_[0] > $_[1] ? $_[0] : $_[1]; }
 sub round { return int(($_[0] < 0 ? -.5 : .5) + $_[0]); }
 
 # local system time
@@ -217,7 +220,7 @@ sub do_after_year {
 }
 
 my ($energy_consumed_this_hour, $energy_produced_this_hour) = (0, 0);
-my  $energy_balanced_this_hour = 0;
+my ($energy_own_used_this_hour, $energy_balanced_this_hour) = (0, 0);
 my ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
 
 sub cleanup() {
@@ -225,6 +228,7 @@ sub cleanup() {
     log_msg "energy sums in Wh so far last hour: "
         ."consumed ".round($energy_consumed_this_hour / SECONDS_PER_HOUR).", "
         ."produced ".round($energy_produced_this_hour / SECONDS_PER_HOUR).", "
+        ."own use " .round($energy_own_used_this_hour / SECONDS_PER_HOUR).", "
         ."balance " .round($energy_balanced_this_hour / SECONDS_PER_HOUR).", "
         ."imported ".round($energy_imported_this_hour / SECONDS_PER_HOUR).", "
         ."exported ".round($energy_exported_this_hour / SECONDS_PER_HOUR);
@@ -462,10 +466,12 @@ if ($addr ne "-" && $out_load_sec) {
             die "cannot parse power value '$load' in last line '$line' of high-resolution load file '$load_sec'"
                 unless $load =~ m/^\s*-?\d+$/;
             $prev_pv_power = $addr_1pm && $i <= $count ? $pv_power[$i] + 0 : 0;
+            my $pv_used = min($load, $prev_pv_power);
             $prev_power = $load - $prev_pv_power;
             $load_sum_minute += $load;
             $energy_consumed_this_hour += $load;
             $energy_produced_this_hour += $prev_pv_power;
+            $energy_own_used_this_hour += $pv_used;
             $energy_balanced_this_hour += $prev_power;
             if ($prev_power > 0) {
                 $energy_imported_this_hour += $prev_power;
@@ -475,6 +481,7 @@ if ($addr ne "-" && $out_load_sec) {
             print "$time $i<=$n, load $load - pv $prev_pv_power = $prev_power, "
                 ."energy sums: consumed $energy_consumed_this_hour, "
                 ."produced $energy_produced_this_hour, "
+                ."own use $energy_own_used_this_hour, "
                 ."balance $energy_balanced_this_hour, "
                 ."imported $energy_imported_this_hour, "
                 ."exported $energy_exported_this_hour\n"
@@ -514,8 +521,8 @@ sub do_before_year {
     $EO ->autoflush; # immediately show each line reporting energy per hour
     $LM ->autoflush; # immediately show each load per minute
     # on empty energy output CSV file, add header:
-    print $EO "time [$tz],consumed [Wh],produced [Wh],balance [Wh],".
-        "imported [Wh],exported [Wh]\n" if -z $energy;
+    print $EO "time [$tz],consumed [Wh],produced [Wh],own use [Wh],".
+        "balance [Wh],imported [Wh],exported [Wh]\n" if -z $energy;
     # no header for load output CSV file
 }
 
@@ -568,6 +575,7 @@ sub do_before_hour {
 sub do_each_second {
     my ($timestamp, $power, $data, $pv_power, $pv_data) = @_;
     my $load = $power + $pv_power;
+    my $pv_used = min($load, $pv_power);
     log_warn("load is not positive: $load") if $load <= 0;
     my $time = time_epoch($timestamp);
     my ($date_3em    , $time_3em    ) = date_time($time);
@@ -580,6 +588,7 @@ sub do_each_second {
     $load_sum_minute += $load;
     $energy_consumed_this_hour += $load;
     $energy_produced_this_hour += $pv_power;
+    $energy_own_used_this_hour += $pv_used; # self-consumption
     $energy_balanced_this_hour += $power;
 # https://www.promotic.eu/en/pmdoc/Subsystems/Comm/PmDrivers/IEC62056_OBIS.htm
 # https://de.wikipedia.org/wiki/Stromz%C3%A4hler Zweirichtungszähler für
@@ -615,9 +624,10 @@ sub do_each_second {
 
         if ($time_3em =~/59:59$/) { # at end of each hour
             printf $EO
-                "$date_time_out,%4d,%4d,%4d,%4d,%4d\n",
+                "$date_time_out,%4d,%4d,%4d,%4d,%4d,%4d\n",
                 round($energy_consumed_this_hour / SECONDS_PER_HOUR),
                 round($energy_produced_this_hour / SECONDS_PER_HOUR),
+                round($energy_own_used_this_hour / SECONDS_PER_HOUR),
                 round($energy_balanced_this_hour / SECONDS_PER_HOUR),
                 round($energy_imported_this_hour / SECONDS_PER_HOUR),
                 round($energy_exported_this_hour / SECONDS_PER_HOUR);
@@ -631,7 +641,7 @@ sub do_each_second {
             log_warn("energy balance = $diff0 vs. $diff2 = ".
                      "energy imported - exported") if abs($diff0 - $diff2) > 1;
             ($energy_consumed_this_hour, $energy_produced_this_hour) = (0, 0);
-             $energy_balanced_this_hour = 0;
+            ($energy_own_used_this_hour, $energy_balanced_this_hour) = (0, 0);
             ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
         }
     }

@@ -70,7 +70,16 @@ sensor:
         device_class: power
         unit_of_measurement: 'W'
         value_template: >-
-          {{ states('sensor.power_balance')|float + states('sensor.power_production')|float }}
+          {{ states('sensor.power_balance'   )|float +
+             states('sensor.power_production')|float }}
+
+      power_own_use:
+        friendly_name: "Power Own Use (self-consumption)"
+        device_class: power
+        unit_of_measurement: 'W'
+        value_template: >-
+          {{ min([states('sensor.power_consumption')|float,
+                  states('sensor.power_production' )|float]) }}
 
 #     # workaround for former issue with power production sensor, leading to yields unavailable untility_metervalue with unknown meaturement unit
 #     energy0_production_hourly:
@@ -121,6 +130,13 @@ sensor:
 
   - name: energy_production_sum
     source: sensor.power_production
+    platform: integration
+    unit_prefix: k
+    round: 3
+    method: left
+
+  - name: energy_own_use_sum
+    source: sensor.power_own_use
     platform: integration
     unit_prefix: k
     round: 3
@@ -238,6 +254,27 @@ utility_meter: # https://www.home-assistant.io/integrations/utility_meter/
     net_consumption: true
     cycle: yearly
 
+  energy_own_use_hourly:
+    name: Energy Own_Use Hourly
+    source: sensor.energy_own_use_sum
+    net_consumption: true
+    cycle: hourly
+  energy_own_use_daily:
+    name: Energy Own_Use Daily
+    source: sensor.energy_own_use_sum
+    net_consumption: true
+    cycle: daily
+  energy_own_use_monthly:
+    name: Energy Own_Use Monthly
+    source: sensor.energy_own_use_sum
+    net_consumption: true
+    cycle: monthly
+  energy_own_use_yearly:
+    name: Energy Own_Use Yearly
+    source: sensor.energy_own_use_sum
+    net_consumption: true
+    cycle: yearly
+
   energy_consumption_minutely:
     name: Energy Consumption Minutely
     source: sensor.power_consumption_sum
@@ -338,7 +375,7 @@ automation:
                       '%7.2f' % (powC) }}"
           # not using 'cons' above to avoid potential inconsistencies with earlier values of 'powA' etc.
 
-  # generate statistics output per hour with energy consumption, production, balance, import, and export
+  # generate statistics output per hour with energy consumption, production, own use, balance, import, and export
   - id: energy_data_to_file
     trigger:
       - platform: time_pattern
@@ -349,13 +386,14 @@ automation:
           time: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
           cons: "{{ ',%4d' % (1000 * states('sensor.energy_consumption_hourly')|float) }}"
           prod: "{{ ',%4d' % (1000 * states('sensor.energy_production_hourly' )|float) }}"
+          own:  "{{ ',%4d' % (1000 * states('sensor.energy_own_use_hourly'    )|float) }}"
           bal:  "{{ ',%4d' % (1000 * states('sensor.energy_balance_hourly'    )|float) }}"
           imp:  "{{ ',%4d' % (1000 * states('sensor.energy_import_hourly'     )|float) }}"
           exp:  "{{ ',%4d' % (1000 * states('sensor.energy_export_hourly'     )|float) }}"
           # unavailable values intentionally lead to missing output line
       - service: notify.energy_data
         data_template:
-          message: "{{time}}{{cons}}{{prod}}{{bal}}{{imp}}{{exp}}"
+          message: "{{time}}{{cons}}{{prod}}{{own}}{{bal}}{{imp}}{{exp}}"
 
   # generate load and PV profile with one line per minute containing average power values (W)
   - id: profile_data_to_file

@@ -26,8 +26,11 @@ such as a digital 'smart meter' or a Shelly (Pro) 3EM energy meter.
 The home automation software [Home Assistant](https://www.home-assistant.io/),
 which may continuously run on a micro controller or a home server.
 With the definitions in [this YAML configuration file](configuration.yaml),
-it can produce both a per-minute load and PV power profile and a per-second
-protocol, which may be post-processed with the following Perl script.
+it can produce a per-minute load and PV power profile as well as a per-second
+protocol in CSV format, which may be post-processed by the following Perl script.
+Moreover, it can produce a CSV file with one line per hour containing the time
+the energy consumed, produced, own use, balance, imported and exported, each of
+which accumulated during the given hour from the power balance and any PV input.
 
 [This Perl script](3em_data_collect.pl) gathers the status data
 reported each second by a Shelly (Pro) 3EM energy meter.\
@@ -109,9 +112,12 @@ erzeugt werden oder mit einem Energiemessgeräts wie dem Shelly (Pro) 3EM und de
 Hausautomatisierungs-Software [Home Assistant](https://www.home-assistant.io/),
 welche z.B. auf einem Mikrocontroller oder einem Heimserver ständig laufen kann.
 Mit Hilfe der Definitionen in [dieser YAML-Konfiguration](configuration.yaml)
-kann sowohl ein minutenweises Ertrags- und Lastprofil erzeugt werden als auch
-ein sekundenweises Protokoll der Lastdaten und ggf. der PV-Erzeugungsleistung,
-welches dann mit dem folgenden Skript weiter verarbeitbar ist.
+kann im CSV-Format sowohl ein minutenweises Ertrags- und Lastprofil erzeugt
+werden als auch ein sekundenweises Protokoll der Lastdaten und ggf. der
+PV-Leistung, welches dann mit dem folgenden Skript weiter verarbeitbar ist.
+Außerdem die stundenweise Protokollierung der verbrauchten und ggf. erzeugten
+Energie, des Eigenverbrauchs, der Gesamt-Energiebilanz, sowie der importierten
+und exportierten Energie, wie sie auch von einen Zweiwegezähler geliefert wird.
 
 [Dieses Perl-Skript](3em_data_collect.pl​) liest die sekündlichen Status-Daten
 eines Energiemessgeräts Shelly (Pro) 3EM kontinuierlich aus. Es kann sie mit den

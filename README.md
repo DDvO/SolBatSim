@@ -44,7 +44,8 @@ total load value obtained by summing up the load values of the three phases.
 * a file per year with the average load per minute in a row per hour,
   which is well suited as SolBatSim input file,
 * and another file per year with
-a record per hour of the energy consumption, production (if any), and balance,
+a record per hour of
+the energy consumption, production and self-consmption (if any), balance,
 as well as the imported energy and exported energy, obtained by accumulating
 the positive/negative per-second total power values over the given hour.
 
@@ -131,8 +132,9 @@ Es kann folgende Daten abspeichern:
 * In einer Datei pro Jahr ein Lastprofil mit einem Eintrag je Minute
   mit dem Durchschnitt der saldierten Leistungswerte über die Minute.
   Diese Datei ist sehr gut als Eingabe-Datei für den SolBatSim geeignet.
-* In einer Datei pro Jahr je Stunde die verbrauchte und erzeugte Energie, die
-  Energiebilanz (Riemann-Summe über die saldierte Leistung am Energiemessgerät),
+* In einer Datei pro Jahr je Stunde die verbrauchte und (soweit vorhanden)
+  erzeugte Energie, den Eigenverbrauch, die Haushalts-Gesamt-Energiebilanz
+  (also die Riemann-Summe über die saldierte Leistung am Energiemessgerät),
   sowie die bezogene (importierte) und die eingespeiste (exportierte) Energie,
   welche sich durch Akkumulation der positiven
   bzw. negativen saldierten Leistungswerte je Sekunde über die Stunde ergibt.

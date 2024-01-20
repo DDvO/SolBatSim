@@ -9,21 +9,26 @@
 # Optionally collect also the storage battery charger status data reported each
 # second by another Shelly Plus 1PM using http://<addr_chg>/rpc/Shelly.GetStatus
 # In this case, the total load is further corrected by subtracting charge power.
+# Optionally collect also the storage battery inverter status data reported
+# each second by an OpenDTU using http://<addr_dis>/api/livedata/status
+# In this case, the total load is further corrected adding the discharge power.
 #
 # Alternatively, take as input per-second load and (optional) PV power data
 # obtained, e.g., using Home Assistant. In this case, <3em_addr> must be '-'.
 #
 # Outputs data in the following files, each of which is optional:
-# * <base_name><power_name>_<date>.csv  total load, any PV input, any charge,
+# * <base_name><power_name>_<date>.csv  total load, PV input, charge, discharge,
 #                                       and the three phase powers per second
-# * <base_name><energy_name>_<year>.csv energy consumed, produced, charged, own use,
+# * <base_name><energy_name>_<year>.csv energy consumed, produced, charged,
+#                                       discharged, own use (self consumption),
 #                                       balance, imported and exported per hour
 # * <base_name><load_min>_<year>.csv  average load per minute, one line per hour
 # * <base_name><load_sec>_<date>.csv    load per second, one line per hour
 # * <base_name><status_name>_<date>.csv status of the three phases per second,
-#                                       preceded by PV power and charger power
+#                             preceded by PV input, charge, and discharge power
 # * <base_name><pvstat_name>_<date>.csv status of optional PV input per second
 # * <base_name><chgstat_name>_<date>.csv status of optional charger per second
+# * <base_name><disstat_name>_<date>.csv status of optional discharge per second
 # * <base_name><log_name>_<year>.txt    info on the data collection per event
 # The script is robust w.r.t. intermittently missing power data by interpolating
 # the data over the range of seconds where no power measurement is available.
@@ -34,14 +39,15 @@
 # day if the file with the load per second is available. For correct recovery
 # including PV production, the file with PV status data per second is needed.
 # With a charger being used, also the file with charger status data is needed.
+# With battery discharge, also the file with discharge status data is needed.
 
 # day if the file containing the load values per second is available.
 #
 # CLI options, each of which may be a value or "" indicating none/default:
 # <base_name> <power_name> <energy_name>
 # <load_min> <load_sec> <status_name> <pvstat_name> <log_name> <time_zone>
-# - |(<3em_addr> <1pm_addr> <chg_addr> <3em_username> <3em_password>
-#     <1pm_user> <1pm_pass> <chg_user> <chg_pass>)
+# - |(<3em_addr> <1pm_addr> <chg_addr> <dis_addr> <3em_username> <3em_password>
+#     <1pm_user> <1pm_pass> <chg_user> <chg_pass> <dis_user> <dis_pass>)
 # where '-' means that data shall be read from subsequent file(s) or STDIN.
 #
 # Alternatively to providing options at the CLI, they may also be given
@@ -68,6 +74,7 @@ my $out_load_sec = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOAD_SEC}; # per second
 my $out_stat     = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_STATUS};   # per second
 my $out_pvstat   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_PV};       # per second
 my $out_chgstat  = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_CHG};      # per second
+my $out_disstat  = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_DIS};      # per second
 my $out_log      = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOG};      # per event
 
 # time zone for output e.g., "local"
@@ -97,6 +104,7 @@ my $addr = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR}; # e.g. 192.168.178.123
 my ($url, $user, $pass);
 my ($addr_1pm, $url_1pm, $user_1pm, $pass_1pm);
 my ($addr_chg, $url_chg, $user_chg, $pass_chg);
+my ($addr_dis, $url_dis, $user_dis, $pass_dis);
 if ($addr eq "-") {
     # read from power.csv file produced by Home Assistant configuration.yaml
     splice(@ARGV,0,$i);
@@ -127,9 +135,12 @@ if ($addr eq "-") {
     $addr_1pm = 0 if $addr_1pm eq "";
     $addr_chg = $ARGV[$i++] || $ENV{Shelly_CHG_ADDR}; # e.g. 192.168.125;
     $addr_chg = 0 if $addr_chg eq "";
+    $addr_dis = $ARGV[$i++] || $ENV{Shelly_DIS_ADDR}; # e.g. 192.168.126;
+    $addr_dis = 0 if $addr_dis eq "";
     $url      = "http://$addr/status";
     $url_1pm  = "http://$addr_1pm/rpc/Shelly.GetStatus" if $addr_1pm;
     $url_chg  = "http://$addr_chg/rpc/Shelly.GetStatus" if $addr_chg;
+    $url_dis  = "http://$addr_dis/api/livedata/status"  if $addr_dis; # OpenDTU
 
     $user     = $ARGV[$i++] || $ENV{Shelly_3EM_USER}; # HTTP username, if needed
     $pass     = $ARGV[$i++] || $ENV{Shelly_3EM_PASS}; # HTTP password, if needed
@@ -137,6 +148,8 @@ if ($addr eq "-") {
     $pass_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_PASS} || $pass;
     $user_chg = $ARGV[$i++] || $ENV{Shelly_CHG_USER} || $user;
     $pass_chg = $ARGV[$i++] || $ENV{Shelly_CHG_PASS} || $pass;
+    $user_dis = $ARGV[$i++] || $ENV{Shelly_DIS_USER} || $user;
+    $pass_dis = $ARGV[$i++] || $ENV{Shelly_DIS_PASS} || $pass;
 }
 
 my $debug = $ENV{Shelly_3EM_DEBUG} // 0;
@@ -192,7 +205,7 @@ use constant SECONDS_PER_HOUR => 60 * SECONDS_PER_MINUTE;
 # max seconds per day even for days with daylight saving time (DST) adaptation:
 # use constant MAX_SECONDS => (24 + 1) * SECONDS_PER_HOUR;
 my ($count_seconds, $count_gaps, $count_1pm_miss) = (0, 0, 0);
-my ($count_chg_miss) = (0);
+my ($count_chg_miss, $count_dis_miss) = (0, 0);
 
 sub out_name {
     my ($name, $period, $ext) = @_;
@@ -207,6 +220,7 @@ my ($load_sec, $LS);
 my ($status, $SO);
 my ($pvstat, $PO);
 my ($chgstat, $CH);
+my ($disstat, $DS);
 my ($powers, $PW);
 my ($log, $LOG);
 # preliminary log:
@@ -228,6 +242,7 @@ sub do_after_day {
     close $SO if defined $SO;
     close $PO if defined $PO;
     close $CH if defined $CH;
+    close $DS if defined $DS;
     close $PW if defined $PW;
 }
 
@@ -238,7 +253,7 @@ sub do_after_year {
 }
 
 my ($energy_consumed_this_hour, $energy_produced_this_hour) = (0, 0);
-my ( $energy_charged_this_hour) = (0);
+my ($energy_charged_this_hour,$energy_discharged_this_hour) = (0, 0);
 my ($energy_own_used_this_hour, $energy_balanced_this_hour) = (0, 0);
 my ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
 
@@ -248,13 +263,15 @@ sub cleanup() {
         ."consumed ".round($energy_consumed_this_hour / SECONDS_PER_HOUR).", "
         ."produced ".round($energy_produced_this_hour / SECONDS_PER_HOUR).", "
         ."charged " .round( $energy_charged_this_hour / SECONDS_PER_HOUR).", "
+        ."discharged ".round($energy_discharged_this_hour/SECONDS_PER_HOUR).", "
         ."own use " .round($energy_own_used_this_hour / SECONDS_PER_HOUR).", "
         ."balance " .round($energy_balanced_this_hour / SECONDS_PER_HOUR).", "
         ."imported ".round($energy_imported_this_hour / SECONDS_PER_HOUR).", "
         ."exported ".round($energy_exported_this_hour / SECONDS_PER_HOUR);
     log_msg("end after $count_seconds seconds, ".
             "$count_gaps gaps, $count_1pm_miss PV data misses, ".
-            "$count_chg_miss charger data misses");
+            "$count_chg_miss charger data misses, ".
+            "$count_dis_miss discharge data misses");
     do_after_year();
 }
 
@@ -356,7 +373,8 @@ sub get_3em {
             unless abs($unixtime - $start->epoch) <= 1
             # 3 seconds diff can happen easily
     }
-    my $power = $powerA + $powerB + $powerC; # may include PV power and charge
+    my $power = $powerA + $powerB + $powerC;
+    # may include PV power, charge, and discharge
     my ($pA, $pB, $pC) = (sprintf("%6.2f", $powerA),
                           sprintf("%6.2f", $powerB),
                           sprintf("%6.2f", $powerC));
@@ -408,6 +426,7 @@ sub get_1pm {
         log_warn("missing $name status minute_ts, discarding '$status_json'");
         goto end;
     }
+    $current = "0    " if abs($current) < 0.0005;
     # PV power might be reported negative, but usually is reported >= 0
     ($power, $data) = (abs($apower), "$voltage,$current,$total,$tC");
     $power = 0 if $power < 1; # even at night, 1PM often reports up to 0.8 W
@@ -425,15 +444,60 @@ sub get_1pm {
     return ($unixtime, $power, $data);
 }
 
+# https://tbnobody.github.io/OpenDTU-docs/firmware/web_api/#get-current-livedata
+sub get_dtu {
+    my ($name, $timestamp, $url, $user, $pass) = @_;
+
+    my $data = "";
+    my $status_json = http_get($url, $user, $pass);
+    if ($status_json =~ m/(Network is unreachable|No route to host|Can't connect|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
+        log_warn("$1 for $name");
+        $timestamp = 0;
+        goto end;
+    }
+
+    unless ($status_json =~ /\{"inverters":\[\{"serial":"\d+","name":"[\w\-]+","order":\d+,"data_age":\d+,"poll_enabled":\w+,"reachable":\w+,"producing":\w+,"limit_relative":([\-\d]+),"limit_absolute":([\-\d]+),"AC":\{"0":\{"Power":\{"v":([\-\d\.]+),"u":"W","d":\d+\},"Voltage":\{"v":([\-\d\.]+),"u":"V","d":\d+\},"Current":\{"v":([\-\d\.]+),"u":"A","d":\d+\},"Power DC":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\},"Frequency":\{"v":([\-\d\.]+),"u":"Hz","d":\d+\},"PowerFactor":\{"v":([\-\d\.]+),"u":"","d":\d+\},"ReactivePower":\{"v":([\-\d\.]+),"u":"var","d":\d+\},"Efficiency":\{"v":([\-\d\.]+),"u":"%","d":\d+\}\}\},"DC":\{(("\d+":\{"name":\{"u":"\w*"\},"Power":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"Voltage":\{"v":[\-\d\.]+,"u":"V","d":\d+\},"Current":\{"v":[\-\d\.]+,"u":"A","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},?)+)\},"INV":\{"0":\{"Temperature":\{"v":([\-\d\.]+),"u":"°C","d":\d+\}\}\},"events":\d+\}\],"total":\{"Power":\{"v":[\-\d\.]+,"u":"W","d":\d\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},"hints":\{"time_sync":\w+,"radio_problem":\w+,"default_password":\w+\}\}/) {
+        if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
+            # e.g.: The requested URL could not be retrieved
+            log_warn("skipping error response: $1 for $name"); # e.g., by Squid
+        } else {
+            my $shown = substr($status_json, 0, 1800); # may be ~1750 chars
+            log_warn("error parsing $name status response '$shown'");
+        }
+        $timestamp = 0;
+        goto end;
+    }
+
+    my ($limit_relative, $limit_absolute, $power, $voltage, $current, $frequency,
+        $power_factor, $reactive_power, $efficiency, $DC, $temperature)
+        = ($1, $2, $3 + 0, $4, $5, $6, $7, $8, $9, $10, $12);
+    my $AC = sprintf("%3d,%2d,%.1f,%.2f,%.1f,%.2f,%.1f,%.1f,%.1f",
+                     $limit_absolute, $limit_relative,
+                     $voltage, $current, $frequency, $power_factor,
+                     $reactive_power, $efficiency, $temperature);
+    $DC =~ s/,"d":\d+//g;
+    $DC =~ s/\{"u":""\},/ /g; # separator between input string
+    $DC =~ s/"\w*"://g;
+    $DC =~ s/(\d\.\d)\d*/$1/g;
+    $DC =~ s/,"(W|V|A|Wh|kWh)"//g;
+    $DC =~ s/[\{\}]//g;
+    $data = "$AC,$DC";
+    print "($time, $name, $power, $data)\n" if $debug;
+
+  end:
+    return ($timestamp, $power, $data);
+}
+
 my $load_sum_minute = 0;
-my ($prev_power, $prev_timestamp) = (0, 0); # may include PV power and charge
+my ($prev_power, $prev_timestamp) = (0, 0);
+# may include PV power, charge, and discharge
 # my $prev = "";
-my $prev_pv_power = 0;
-my $prev_chg_power = 0;
+my ($prev_pv_power, $prev_chg_power, $prev_dis_power) = (0, 0, 0);
 
 log_msg("start - will connect to $url"
         .($url_1pm ? " and $url_1pm" : "")
-        .($url_chg ? " and $url_chg" : ""))
+        .($url_chg ? " and $url_chg" : "")
+        .($url_dis ? " and $url_dis" : ""))
     unless $addr eq "-";
 
 # try recover data from any previous run
@@ -463,7 +527,7 @@ if ($addr ne "-" && $out_load_sec) {
 
         my $count = -1;
         my @pv_power = ("");
-        if ($addr_1pm) { # TODO also for addr_chg   
+        if ($addr_1pm) { # TODO also for addr_chg and addr_dis   
             if ($out_pvstat) {
                 my $pvstat = out_name($out_pvstat, $date, ".csv");
                 if (open(my $PO, '<' ,$pvstat)) {
@@ -503,6 +567,7 @@ if ($addr ne "-" && $out_load_sec) {
             $energy_consumed_this_hour += $load;
             $energy_produced_this_hour += $prev_pv_power;
              $energy_charged_this_hour += $prev_chg_power;
+          $energy_discharged_this_hour += $prev_dis_power;
             $energy_own_used_this_hour += $pv_used;
             $energy_balanced_this_hour += $prev_power;
             if ($prev_power > 0) {
@@ -514,6 +579,7 @@ if ($addr ne "-" && $out_load_sec) {
                 ."energy sums: consumed $energy_consumed_this_hour, "
                 ."produced $energy_produced_this_hour, "
                 . "charged $energy_charged_this_hour, "
+           ."discharged $energy_discharged_this_hour, "
                 ."own use $energy_own_used_this_hour, "
                 ."balance $energy_balanced_this_hour, "
                 ."imported $energy_imported_this_hour, "
@@ -554,7 +620,7 @@ sub do_before_year {
     $EO ->autoflush; # immediately show each line reporting energy per hour
     $LM ->autoflush; # immediately show each load per minute
     # on empty energy output CSV file, add header:
-    print $EO "time [$tz],consumed [Wh],produced [Wh],charged [Wh],own use [Wh],".
+    print $EO "time [$tz],consumed [Wh],produced [Wh],charged [Wh],discharged [Wh],own use [Wh],".
         "balance [Wh],imported [Wh],exported [Wh]\n" if -z $energy;
     # no header for load output CSV file
 }
@@ -570,15 +636,18 @@ sub do_before_day {
     $status = out_name($out_stat, $date_3em_out, ".csv");
     $pvstat = out_name($out_pvstat, $date_3em_out, ".csv");
     $chgstat = out_name($out_chgstat, $date_3em_out, ".csv");
+    $disstat = out_name($out_disstat, $date_3em_out, ".csv");
     $powers = out_name($out_power , $date_3em_out, ".csv");
     open($LS,'>>',$load_sec) || die "cannot open '$load_sec' for appending: $!";
     open($SO, '>>', $status) || die "cannot open '$status' for appending: $!";
     open($PO, '>>', $pvstat) || die "cannot open '$pvstat' for appending: $!";
     open($CH, '>>', $chgstat)|| die "cannot open '$chgstat' for appending: $!";
+    open($DS, '>>', $disstat)|| die "cannot open '$disstat' for appending: $!";
     open($PW, '>>', $powers) || die "cannot open '$powers' for appending: $!";
 
     # no header for load output CSV file
-    print $SO "time [$tz],PV power [W],charger power [W],total_power [W],".
+    print $SO "time [$tz],PV power [W],charge power [W],discharge power [W],".
+        "total_power [W],".
    "powerA [W],pfA,currentA [A],voltageA [V],totalA [Wh],total_returnedA [Wh],".
    "powerB [W],pfB,currentB [A],voltageB [V],totalB [Wh],total_returnedB [Wh],".
    "powerC [W],pfC,currentC [A],voltageC [V],totalC [Wh],total_returnedC [Wh]\n"
@@ -589,8 +658,16 @@ sub do_before_day {
     print $CH "time [$tz],charger power [W],".
         "voltage [V],current [A],total [Wh],temperature [°C]\n"
         if -z $chgstat; # on empty charger output CSV file, add header
-    print $PW "time [$tz],load [W], PV power [W], charge power [W],".
-        "powerA [W],powerB [W],powerC [W]\n"
+    print $DS "time [$tz],discharge power [W],limit [W],limit [%],".
+        "voltage [V],current [A],frequency [Hz],power factor,".
+        "reactive power [var],efficiency [%], temperature [°C],".
+        "string 0 power [W],string 0 voltage [V],string 0 current [A],".
+        "string 0 yield day [Wh],string 0 yield total [kWh],".
+        "string 1 power [W],string 1 voltage [V],string 1 current [A],".
+        "string 1 yield day [Wh],string 1 yield total [kWh]\n"
+        if -z $disstat; # on empty discharge output CSV file, add header
+    print $PW "time [$tz],load [W],PV power [W],charge power [W],".
+        "discharge power [W],powerA [W],powerB [W],powerC [W]\n"
         if -z $powers; # on empty power output CSV file, add header
 }
 
@@ -612,8 +689,8 @@ sub do_before_hour {
 
 sub do_each_second {
     my ($timestamp, $power, $data, $pv_power, $pv_data,
-        $chg_power, $chg_data) = @_;
-    my $load = $power + $pv_power - $chg_power;
+        $chg_power, $chg_data, $dis_power, $dis_data) = @_;
+    my $load = $power + $pv_power - $chg_power + $dis_power;
     my $pv_used = min($load, $pv_power);
     log_warn("load is not positive: $load") if $load <= 0;
     my $time = time_epoch($timestamp);
@@ -627,7 +704,8 @@ sub do_each_second {
     $load_sum_minute += $load;
     $energy_consumed_this_hour += $load;
     $energy_produced_this_hour += $pv_power;
-    $energy_charged_this_hour  += $chg_power;
+     $energy_charged_this_hour += $chg_power;
+  $energy_discharged_this_hour += $dis_power;
     $energy_own_used_this_hour += $pv_used; # self-consumption
     $energy_balanced_this_hour += $power;
 # https://www.promotic.eu/en/pmdoc/Subsystems/Comm/PmDrivers/IEC62056_OBIS.htm
@@ -640,10 +718,12 @@ sub do_each_second {
     print $LS ",".round($load);
     my $pvpower  =  $pv_power ? sprintf("%5.1f",  $pv_power) : "    0";
     my $chgpower = $chg_power ? sprintf("%5.1f", $chg_power) : "    0";
-    print $SO "$time_3em_out,$pvpower,$chgpower,"
+    my $dispower = $dis_power ? sprintf("%5.1f", $dis_power) : "    0";
+    print $SO "$time_3em_out,$pvpower,$chgpower,$dispower,"
         .sprintf("%+6.2f", $power)."$data\n";
     print $PO "$time_3em_out,$pvpower$pv_data\n";
     print $CH "$time_3em_out,$chgpower$chg_data\n";
+    print $DS "$time_3em_out,$dispower$dis_data\n";
     if ($data ne "") {
         my @dat = (split ",", $data);
         my $inc = $#dat == 3 ? 1 : 6;
@@ -654,7 +734,7 @@ sub do_each_second {
     }
     my $date_time_out = $date_3em_out.$date_time_sep_out.$time_3em_out;
     print $PW "$date_time_out,".sprintf("%7.2f", $load)
-        .",$pvpower,$chgpower$data\n";
+        .",$pvpower,$chgpower,$dispower$data\n";
 
     if (!$first && $time_3em =~/:59$/) { # end of each minute
         print $LM ",".round($load_sum_minute / SECONDS_PER_MINUTE);
@@ -665,14 +745,16 @@ sub do_each_second {
         $SO->flush();
         $PO->flush();
         $CH->flush();
+        $DS->flush();
         $PW->flush();
 
         if ($time_3em =~/59:59$/) { # at end of each hour
             printf $EO
-                "$date_time_out,%4d,%4d,%4d,%4d,%4d,%4d,%4d\n",
+                "$date_time_out,%4d,%4d,%4d,%4d,%4d,%4d,%4d,%4d\n",
                 round($energy_consumed_this_hour / SECONDS_PER_HOUR),
                 round($energy_produced_this_hour / SECONDS_PER_HOUR),
                 round( $energy_charged_this_hour / SECONDS_PER_HOUR),
+              round($energy_discharged_this_hour / SECONDS_PER_HOUR),
                 round($energy_own_used_this_hour / SECONDS_PER_HOUR),
                 round($energy_balanced_this_hour / SECONDS_PER_HOUR),
                 round($energy_imported_this_hour / SECONDS_PER_HOUR),
@@ -687,6 +769,7 @@ sub do_each_second {
             log_warn("energy balance = $diff0 vs. $diff2 = ".
                      "energy imported - exported") if abs($diff0 - $diff2) > 1;
             ($energy_consumed_this_hour, $energy_produced_this_hour) = (0, 0);
+            ($energy_charged_this_hour,$energy_discharged_this_hour) = (0, 0);
             ($energy_own_used_this_hour, $energy_balanced_this_hour) = (0, 0);
             ($energy_imported_this_hour, $energy_exported_this_hour) = (0, 0);
         }
@@ -700,14 +783,17 @@ $start = DateTime->now(time_zone => $tz);
 do {
     goto end if $addr eq "-" && ++$item > $#times;
     my $first = $count_seconds == 0;
-    my ($timestamp, $power, $data) = get_3em($first); # may include PV power and charge
+    my ($timestamp, $power, $data) = get_3em($first);
+    # may include PV power, charge, and discharge
     $power += $test_extra_power;
     my ( $pv_timestamp,  $pv_power,  $pv_data) = (0, 0, "");
     my ($chg_timestamp, $chg_power, $chg_data) = (0, 0, "");
+    my ($dis_timestamp, $dis_power, $dis_data) = (0, 0, "");
     my $diff_seconds = $prev_timestamp ? $timestamp - $prev_timestamp : 1;
     if ($diff_seconds == 0) {
         print "$time: $timestamp (skipping result for same time)\n" if $debug;
     } else {
+        $nseconds += $diff_seconds unless $first;
         if ($addr_1pm && $diff_seconds >= 1) {
             ($pv_timestamp, $pv_power, $pv_data) =
                 get_1pm("PV", $timestamp, $url_1pm, $user_1pm, $pass_1pm);
@@ -730,6 +816,16 @@ do {
                 $chg_power = $prev_chg_power;
             }
         }
+        if ($addr_dis && $diff_seconds >= 1) {
+            ($dis_timestamp, $dis_power, $dis_data) =
+                get_dtu("discharge", $timestamp, $url_dis, $user_dis, $pass_dis);
+            if (!$dis_timestamp) {
+                log_warn("taking previous discharge power value $prev_dis_power"
+                         ." as no current status data available from DTU");
+                ++$count_dis_miss;
+                $dis_power = $prev_dis_power;
+            }
+        }
         print "$time: $timestamp ($diff_seconds seconds)\n" if $debug;
         if ($diff_seconds > 1) {
             log_warn("time gap ".++$count_gaps.": $diff_seconds seconds");
@@ -737,13 +833,15 @@ do {
             my $power_step = ($power - $prev_power) / $diff_seconds;
             my  $pv_power_step = ( $pv_power -  $prev_pv_power) / $diff_seconds;
             my $chg_power_step = ($chg_power - $prev_chg_power) / $diff_seconds;
+            my $dis_power_step = ($dis_power - $prev_dis_power) / $diff_seconds;
             while (--$diff_seconds) {
                 $prev_power += $power_step;
                 $prev_pv_power += $pv_power_step;
                 $prev_chg_power += $chg_power_step;
+                $prev_dis_power += $dis_power_step;
                 do_each_second(++$prev_timestamp,
                                $prev_power, "", $prev_pv_power, "",
-                               $prev_chg_power, "");
+                               $prev_chg_power, "", $prev_dis_power, "");
             }
         }
         if ($diff_seconds < 0) {
@@ -751,12 +849,13 @@ do {
             $timestamp = $prev_timestamp;
         } else {
             do_each_second($timestamp, $power, ",$data", $pv_power, ",$pv_data",
-                           $chg_power, ",$chg_data");
+                           $chg_power, ",$chg_data", $dis_power, ",$dis_data");
         }
     }
 
     $prev_pv_power = $pv_power;
     $prev_chg_power = $chg_power;
+    $prev_dis_power = $dis_power;
     $prev_power = $power;
     $prev_timestamp = $timestamp;
     # $prev = $time;

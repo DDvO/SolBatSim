@@ -30,15 +30,19 @@ it can produce both a per-minute load and PV power profile and a per-second
 protocol, which may be post-processed with the following Perl script.
 
 [This Perl script](3em_data_collect.pl) gathers the status data
-reported each second by a Shelly (Pro) 3EM energy meter.\
-It can also collect the PV status data reported each second by a Shelly Plus 1PM.
+reported each second by a Shelly (Pro) 3EM energy meter.
+* It can also collect the PV status data reported each second by a Shelly Plus 1PM.
 In this case, the total load reported by the 3PM energy meter is corrected by
-adding the absolute value of the PV power input reported by the 1PM power meter.\
-Optionally, with an AC-coupled storage battery, it collects also the charger
+adding the absolute value of the PV power input reported by the 1PM power meter.
+* Optionally, with an AC-coupled storage battery, it collects also the charger
 status data reported each second by another Shelly Plus 1PM. In this case,
 the total load is further corrected by subtracting the battery charge power.\
-Alternatively,
-it takes its input from per-second load and (optional) PV power data obtained,
+* Optionally, with AC-coupled storage, it collects also
+the discharge inverter data reported each second by an OpenDTU.
+In this case, the total load is further corrected adding the discharge power.
+
+Alternatively, the script takes its input from per-second
+load and (optional) PV power data obtained,
 e.g., using Home Assistant with [configuration.yaml](configuration.yaml).
 * The script can save the per-second status data in a file per day, including a
 total load value obtained by summing up the load values of the three phases.

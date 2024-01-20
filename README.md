@@ -34,6 +34,9 @@ reported each second by a Shelly (Pro) 3EM energy meter.\
 It can also collect the PV status data reported each second by a Shelly Plus 1PM.
 In this case, the total load reported by the 3PM energy meter is corrected by
 adding the absolute value of the PV power input reported by the 1PM power meter.\
+Optionally, with an AC-coupled storage battery, it collects also the charger
+status data reported each second by another Shelly Plus 1PM. In this case,
+the total load is further corrected by subtracting the battery charge power.\
 Alternatively,
 it takes its input from per-second load and (optional) PV power data obtained,
 e.g., using Home Assistant with [configuration.yaml](configuration.yaml).
@@ -118,6 +121,8 @@ eines Energiemessgeräts Shelly (Pro) 3EM kontinuierlich aus. Es kann sie mit de
 Status-Daten eines Shelly Plus 1PM verknüpfen, der die Leistung einer kleinen
 PV-Anlage misst, indem es als Haushalts-Last die Summe aus der saldierten
 Leistung am Energiemessgerät und dem Absolutbetrag der PV-Leistung bildet.\
+Zusätzlich kann es eines weiteren Shelly Plus 1PM berücksichigen, der die
+vom Ladegerät einer AC-gekoppelten Speicherbatterie bezogene Leistung misst.\
 Alternativ verarbeitet es als Eingabe
 sekündliche Last- und ggf. PV-Leistungsdaten, die z.B. vom Home Assistant
 mit [configuration.yaml](configuration.yaml) erzeugt wurden.\

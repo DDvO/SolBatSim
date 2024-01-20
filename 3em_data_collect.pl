@@ -780,7 +780,9 @@ use Time::HiRes qw(usleep);
 
 # re-calculate due to potenital delays recovering data from any previous run:
 $start = DateTime->now(time_zone => $tz);
+my ($nseconds, $rounds) = (0, 0) if $debug;
 do {
+    $rounds++ if $debug;
     goto end if $addr eq "-" && ++$item > $#times;
     my $first = $count_seconds == 0;
     my ($timestamp, $power, $data) = get_3em($first);
@@ -859,9 +861,10 @@ do {
     $prev_power = $power;
     $prev_timestamp = $timestamp;
     # $prev = $time;
-    usleep(700000) # 0.7 secs; each iteration otherwise takes about .2 seconds
+    usleep(600000) # 0.6 secs; each iteration otherwise takes about .4 seconds
         unless $addr eq "-";
     ($date, $time) = date_time_now();
+    printf("%.2f seconds/round\n", $nseconds / $rounds) if $debug;
 } while(1);
 # while ($count_seconds < MAX_SECONDS); # stop after 1 day at the latest
 # while $time ge $prev # not yet wrap around at 24:00:00

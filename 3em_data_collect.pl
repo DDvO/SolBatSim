@@ -252,18 +252,24 @@ $SIG{'INT'} = $SIG{'TERM'} = sub {
     kill($sig, $$); # execute default action
 };
 
+# https://www.xmodulo.com/how-to-send-http-get-or-post-request-in-perl.html
 # https://stackoverflow.com/questions/19842400/perl-http-post-authentication
 sub http_get {
-    use HTTP::Request::Common;
-    require LWP::UserAgent;
     my ($url, $user, $pass) = @_;
-    my $ua = new LWP::UserAgent;
 
+    use LWP::UserAgent;
+    my $ua = LWP::UserAgent->new;
     $ua->timeout(1);
-    my $request = GET $url;
-    $request->authorization_basic($user, $pass) if $user;
-    my $response = $ua->request($request);
-    return $response->content;
+    my $req = HTTP::Request->new(GET => $url);
+    $req->authorization_basic($user, $pass) if $user || $pass;
+    my $resp = $ua->request($req);
+    if ($resp->is_success) {
+        # print "HTTP GET response: ".$resp->decoded_content."\n";
+    }
+    else {
+        print "HTTP GET status: ", $resp->code, ", err: ", $resp->message, "\n";
+    }
+    return $resp->content;
 }
 
 my $last_valid_unixtime = 0;

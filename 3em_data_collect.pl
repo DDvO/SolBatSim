@@ -680,8 +680,8 @@ sub do_before_hour {
     do_before_day($date_3em, $time_3em, $date_3em_out, $time_3em_out, $first);
 
     return if $first && $prev_timestamp;
-    print $LM "\n" unless ($first || -z $load_min);
-    print $LS "\n" unless ($first || -z $load_sec);
+    print $LM "\n" unless (-z $load_min);
+    print $LS "\n" unless (-z $load_sec);
     my $date_time_out = $date_3em_out.$date_time_sep_out.$time_3em_out; # $hour_3em
     print $LM $date_time_out;
     print $LS $date_time_out;

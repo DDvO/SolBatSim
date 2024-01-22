@@ -429,7 +429,6 @@ sub get_1pm {
     $current = "0    " if abs($current) < 0.0005;
     # PV power might be reported negative, but usually is reported >= 0
     ($power, $data) = (abs($apower), "$voltage,$current,$total,$tC");
-    $power = 0 if $power < 1; # even at night, 1PM often reports up to 0.8 W
 
     my $dt = time_epoch($unixtime);
     my $hour = sprintf("%02d:%02d", $dt->hour, $dt->minute);
@@ -810,6 +809,7 @@ do {
         if ($addr_1pm && $diff_seconds >= 1) {
             ($pv_timestamp, $pv_power, $pv_data) =
                 get_1pm("PV", $timestamp, $url_1pm, $user_1pm, $pass_1pm);
+            $pv_power = 0 if $pv_power < 0.9; # inverter drags ~0.7 W on standby
             $pv_power += $test_extra_pv_power;
                $power -= $test_extra_pv_power;
             if (!$pv_timestamp) {
@@ -820,8 +820,9 @@ do {
             }
         }
         if ($addr_chg && $diff_seconds >= 1) {
-            ($chg_timestamp, $chg_power, $chg_data) =
+            ($chg_timestamp, my $chg, $chg_data) =
                 get_1pm("charger", $timestamp, $url_chg, $user_chg, $pass_chg);
+            $chg_power = max(0, $chg - 2.5); # HLG-600H drags ~2.4 W on standby
             if (!$chg_timestamp) {
                 log_warn("taking previous charge power value $prev_chg_power "
                          ."as no current status data available from charger");

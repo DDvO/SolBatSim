@@ -692,7 +692,10 @@ sub do_each_second {
         $chg_power, $chg_data, $dis_power, $dis_data) = @_;
     my $load = $power + $pv_power - $chg_power + $dis_power;
     my $pv_used = min($load, $pv_power);
-    log_warn("load is not positive: $load") if $load <= 0;
+    log_warn(       "load is not positive: $load"     ) unless  $load > 0;
+    log_warn(       "PV power is negative: $pv_power" ) if  $pv_power < 0;
+    log_warn(   "charge power is negative: $chg_power") if $chg_power < 0;
+    log_warn("discharge power is negative: $dis_power") if $dis_power < 0;
     my $time = time_epoch($timestamp);
     my ($date_3em    , $time_3em    ) = date_time($time);
     my ($date_3em_out, $time_3em_out) = date_time_out($time);
@@ -749,25 +752,33 @@ sub do_each_second {
         $PW->flush();
 
         if ($time_3em =~/59:59$/) { # at end of each hour
+            my $consumed = round($energy_consumed_this_hour / SECONDS_PER_HOUR);
+            my $produced = round($energy_produced_this_hour / SECONDS_PER_HOUR);
+            my $charged  = round( $energy_charged_this_hour / SECONDS_PER_HOUR);
+            my $discharged=round($energy_discharged_this_hour/SECONDS_PER_HOUR);
+            my $own_used = round($energy_own_used_this_hour / SECONDS_PER_HOUR);
+            my $balanced = round($energy_balanced_this_hour / SECONDS_PER_HOUR);
+            my $imported = round($energy_imported_this_hour / SECONDS_PER_HOUR);
+            my $exported = round($energy_exported_this_hour / SECONDS_PER_HOUR);
             printf $EO
                 "$date_time_out,%4d,%4d,%4d,%4d,%4d,%4d,%4d,%4d\n",
-                round($energy_consumed_this_hour / SECONDS_PER_HOUR),
-                round($energy_produced_this_hour / SECONDS_PER_HOUR),
-                round( $energy_charged_this_hour / SECONDS_PER_HOUR),
-              round($energy_discharged_this_hour / SECONDS_PER_HOUR),
-                round($energy_own_used_this_hour / SECONDS_PER_HOUR),
-                round($energy_balanced_this_hour / SECONDS_PER_HOUR),
-                round($energy_imported_this_hour / SECONDS_PER_HOUR),
-                round($energy_exported_this_hour / SECONDS_PER_HOUR);
-            my $diff1 = round(($energy_consumed_this_hour -
-                               $energy_produced_this_hour) / SECONDS_PER_HOUR);
-            my $diff0 = round(($energy_balanced_this_hour) / SECONDS_PER_HOUR);
+                $consumed, $produced, $charged, $discharged,
+                $own_used, $balanced, $imported, $exported;
+
+            my $diff1 = round(($energy_consumed_this_hour
+                               +$energy_charged_this_hour
+                               -$energy_discharged_this_hour
+                               -$energy_produced_this_hour) / SECONDS_PER_HOUR);
+            log_warn("energy balance = $balanced vs. $diff1 = ".
+                     "energy consumed $consumed + charged $charged - ".
+                     "energy discharged $discharged - produced $produced")
+                if abs($balanced - $diff1) > 1;
             my $diff2 = round(($energy_imported_this_hour -
                                $energy_exported_this_hour) / SECONDS_PER_HOUR);
-            log_warn("energy balance = $diff0 vs. $diff1 = ".
-                     "energy consumed - produced") if abs($diff0 - $diff1) > 1;
-            log_warn("energy balance = $diff0 vs. $diff2 = ".
-                     "energy imported - exported") if abs($diff0 - $diff2) > 1;
+            log_warn("energy balance = $balanced vs. $diff2 = ".
+                     "energy imported $imported - exported $exported")
+                if abs($balanced - $diff2) > 1;
+
             ($energy_consumed_this_hour, $energy_produced_this_hour) = (0, 0);
             ($energy_charged_this_hour,$energy_discharged_this_hour) = (0, 0);
             ($energy_own_used_this_hour, $energy_balanced_this_hour) = (0, 0);

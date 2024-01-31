@@ -53,8 +53,10 @@ total load value obtained by summing up the load values of the three phases.
 * and another file per year with
 a record per hour of
 the energy consumption, production and self-consmption (if any), balance,
-as well as the imported energy and exported energy, obtained by accumulating
-the positive/negative per-second total power values over the given hour.
+the imported energy and exported energy (obtained by accumulating
+the positive/negative per-second power balance values over the given hour),
+the charged and discharged energy (if any), as well as the voltage
+of the storage battery (if present, 0 otherwise) at the end of the hour.
 
 The script is robust against intermittently missing power data, by interpolating
 the data over the range of seconds where no power measurement is available.\

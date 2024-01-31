@@ -19,9 +19,10 @@
 # Outputs data in the following files, each of which is optional:
 # * <base_name><power_name>_<date>.csv  total load, PV input, charge, discharge,
 #                                       and the three phase powers per second
-# * <base_name><energy_name>_<year>.csv energy consumed, produced, charged,
-#                                       discharged, own use (self consumption),
-#                                       balance, imported and exported per hour
+# * <base_name><energy_name>_<year>.csv energy consumed, produced, own use (self
+#                                     consumption), balance, imported, exported,
+#                                     charged, and discharged in total per hour,
+#                                     and any battery voltage at the end of hour
 # * <base_name><load_min>_<year>.csv  average load per minute, one line per hour
 # * <base_name><load_sec>_<date>.csv    load per second, one line per hour
 # * <base_name><status_name>_<date>.csv status of the three phases per second,
@@ -455,7 +456,9 @@ sub get_dtu {
         goto end;
     }
 
-    unless ($status_json =~ /\{"inverters":\[\{"serial":"\d+","name":"[\w\-]+","order":\d+,"data_age":\d+,"poll_enabled":\w+,"reachable":\w+,"producing":\w+,"limit_relative":([\-\d]+),"limit_absolute":([\-\d]+),"AC":\{"0":\{"Power":\{"v":([\-\d\.]+),"u":"W","d":\d+\},"Voltage":\{"v":([\-\d\.]+),"u":"V","d":\d+\},"Current":\{"v":([\-\d\.]+),"u":"A","d":\d+\},"Power DC":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\},"Frequency":\{"v":([\-\d\.]+),"u":"Hz","d":\d+\},"PowerFactor":\{"v":([\-\d\.]+),"u":"","d":\d+\},"ReactivePower":\{"v":([\-\d\.]+),"u":"var","d":\d+\},"Efficiency":\{"v":([\-\d\.]+),"u":"%","d":\d+\}\}\},"DC":\{(("\d+":\{"name":\{"u":"\w*"\},"Power":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"Voltage":\{"v":[\-\d\.]+,"u":"V","d":\d+\},"Current":\{"v":[\-\d\.]+,"u":"A","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},?)+)\},"INV":\{"0":\{"Temperature":\{"v":([\-\d\.]+),"u":"°C","d":\d+\}\}\},"events":\d+\}\],"total":\{"Power":\{"v":[\-\d\.]+,"u":"W","d":\d\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},"hints":\{"time_sync":\w+,"radio_problem":\w+,"default_password":\w+\}\}/) {
+    # \{"inverters":\[
+    unless ($status_json =~ /\{"serial":"\d+","name":"[\w\-]+","order":\d+,"data_age":\d+,"poll_enabled":\w+,"reachable":\w+,"producing":\w+,"limit_relative":([\-\d]+),"limit_absolute":([\-\d]+),"AC":\{"0":\{"Power":\{"v":([\-\d\.]+),"u":"W","d":\d+\},"Voltage":\{"v":([\-\d\.]+),"u":"V","d":\d+\},"Current":\{"v":([\-\d\.]+),"u":"A","d":\d+\},"Power DC":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\},"Frequency":\{"v":([\-\d\.]+),"u":"Hz","d":\d+\},"PowerFactor":\{"v":([\-\d\.]+),"u":"","d":\d+\},"ReactivePower":\{"v":([\-\d\.]+),"u":"var","d":\d+\},"Efficiency":\{"v":([\-\d\.]+),"u":"%","d":\d+\}\}\},"DC":\{(("\d+":\{"name":\{"u":"\w*"\},"Power":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"Voltage":\{"v":[\-\d\.]+,"u":"V","d":\d+\},"Current":\{"v":[\-\d\.]+,"u":"A","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},?)+)\},"INV":\{"0":\{"Temperature":\{"v":([\-\d\.]+),"u":"°C","d":\d+\}\}\},"events":\d+\}/) {
+    # \],"total":\{"Power":\{"v":[\-\d\.]+,"u":"W","d":\d\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},"hints":\{"time_sync":\w+,"radio_problem":\w+,"default_password":\w+\}\}
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved
             log_warn("skipping error response: $1 for $name"); # e.g., by Squid
@@ -619,8 +622,9 @@ sub do_before_year {
     $EO ->autoflush; # immediately show each line reporting energy per hour
     $LM ->autoflush; # immediately show each load per minute
     # on empty energy output CSV file, add header:
-    print $EO "time [$tz],consumed [Wh],produced [Wh],charged [Wh],discharged [Wh],own use [Wh],".
-        "balance [Wh],imported [Wh],exported [Wh]\n" if -z $energy;
+    print $EO "time [$tz],consumed [Wh],produced [Wh],own use [Wh],".
+        "balance [Wh],imported [Wh],exported [Wh],".
+        "charged [Wh],discharged [Wh],battery [V]\n" if -z $energy;
     # no header for load output CSV file
 }
 
@@ -759,10 +763,13 @@ sub do_each_second {
             my $balanced = round($energy_balanced_this_hour / SECONDS_PER_HOUR);
             my $imported = round($energy_imported_this_hour / SECONDS_PER_HOUR);
             my $exported = round($energy_exported_this_hour / SECONDS_PER_HOUR);
+            my $voltage = " 0";
+            $voltage = sprintf("%2.1f", $1) if $dis_data =~
+                m/,[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,([\-\d\.]+),[^,]*,[^,]*,[^,]*/;
             printf $EO
-                "$date_time_out,%4d,%4d,%4d,%4d,%4d,%4d,%4d,%4d\n",
-                $consumed, $produced, $charged, $discharged,
-                $own_used, $balanced, $imported, $exported;
+                "$date_time_out,%4d,%4d,%4d,%4d,%4d,%4d,%4d,%4d,%s\n",
+                $consumed, $produced, $own_used, $balanced,
+                $imported, $exported, $charged, $discharged, $voltage;
 
             my $diff1 = round(($energy_consumed_this_hour
                                +$energy_charged_this_hour

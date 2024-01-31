@@ -47,8 +47,9 @@
 # CLI options, each of which may be a value or "" indicating none/default:
 # <base_name> <power_name> <energy_name>
 # <load_min> <load_sec> <status_name> <pvstat_name> <log_name> <time_zone>
-# - |(<3em_addr> <1pm_addr> <chg_addr> <dis_addr> <3em_username> <3em_password>
-#     <1pm_user> <1pm_pass> <chg_user> <chg_pass> <dis_user> <dis_pass>)
+# - |(<3em_addr> <1pm_addr> <chg_addr> <dis_addr> <dis_serial>
+#     <3em_username> <3em_password> <1pm_username> <1pm_password>
+#     <chg_username> <chg_password> <dis_username> <dis_password>)
 # where '-' means that data shall be read from subsequent file(s) or STDIN.
 #
 # Alternatively to providing options at the CLI, they may also be given
@@ -105,7 +106,7 @@ my $addr = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR}; # e.g. 192.168.178.123
 my ($url, $user, $pass);
 my ($addr_1pm, $url_1pm, $user_1pm, $pass_1pm);
 my ($addr_chg, $url_chg, $user_chg, $pass_chg);
-my ($addr_dis, $url_dis, $user_dis, $pass_dis);
+my ($addr_dis, $url_dis, $user_dis, $pass_dis, $serial_dis);
 if ($addr eq "-") {
     # read from power.csv file produced by Home Assistant configuration.yaml
     splice(@ARGV,0,$i);
@@ -132,12 +133,13 @@ if ($addr eq "-") {
     may_fill_last_sec() if $#times >= 0;
     $item = -1;
 } else {
-    $addr_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_ADDR}; # e.g. 192.168.124;
+    $addr_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_ADDR}; # e.g. 192.168.178.124
     $addr_1pm = 0 if $addr_1pm eq "";
-    $addr_chg = $ARGV[$i++] || $ENV{Shelly_CHG_ADDR}; # e.g. 192.168.125;
+    $addr_chg = $ARGV[$i++] || $ENV{Shelly_CHG_ADDR}; # e.g. 192.168.178.125
     $addr_chg = 0 if $addr_chg eq "";
-    $addr_dis = $ARGV[$i++] || $ENV{Shelly_DIS_ADDR}; # e.g. 192.168.126;
+    $addr_dis = $ARGV[$i++] || $ENV{Shelly_DIS_ADDR}; # e.g. 192.168.178.126
     $addr_dis = 0 if $addr_dis eq "";
+    $serial_dis = $ARGV[$i++] || $ENV{Shelly_DIS_SERIAL}; # e.g. 112183822756
     $url      = "http://$addr/status";
     $url_1pm  = "http://$addr_1pm/rpc/Shelly.GetStatus" if $addr_1pm;
     $url_chg  = "http://$addr_chg/rpc/Shelly.GetStatus" if $addr_chg;
@@ -457,7 +459,7 @@ sub get_dtu {
     }
 
     # \{"inverters":\[
-    unless ($status_json =~ /\{"serial":"\d+","name":"[\w\-]+","order":\d+,"data_age":\d+,"poll_enabled":\w+,"reachable":\w+,"producing":\w+,"limit_relative":([\-\d]+),"limit_absolute":([\-\d]+),"AC":\{"0":\{"Power":\{"v":([\-\d\.]+),"u":"W","d":\d+\},"Voltage":\{"v":([\-\d\.]+),"u":"V","d":\d+\},"Current":\{"v":([\-\d\.]+),"u":"A","d":\d+\},"Power DC":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\},"Frequency":\{"v":([\-\d\.]+),"u":"Hz","d":\d+\},"PowerFactor":\{"v":([\-\d\.]+),"u":"","d":\d+\},"ReactivePower":\{"v":([\-\d\.]+),"u":"var","d":\d+\},"Efficiency":\{"v":([\-\d\.]+),"u":"%","d":\d+\}\}\},"DC":\{(("\d+":\{"name":\{"u":"\w*"\},"Power":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"Voltage":\{"v":[\-\d\.]+,"u":"V","d":\d+\},"Current":\{"v":[\-\d\.]+,"u":"A","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},?)+)\},"INV":\{"0":\{"Temperature":\{"v":([\-\d\.]+),"u":"°C","d":\d+\}\}\},"events":\d+\}/) {
+    unless ($status_json =~ /\{"serial":"$serial_dis","name":"[\w\-]+","order":\d+,"data_age":\d+,"poll_enabled":\w+,"reachable":\w+,"producing":\w+,"limit_relative":([\-\d]+),"limit_absolute":([\-\d]+),"AC":\{"0":\{"Power":\{"v":([\-\d\.]+),"u":"W","d":\d+\},"Voltage":\{"v":([\-\d\.]+),"u":"V","d":\d+\},"Current":\{"v":([\-\d\.]+),"u":"A","d":\d+\},"Power DC":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\},"Frequency":\{"v":([\-\d\.]+),"u":"Hz","d":\d+\},"PowerFactor":\{"v":([\-\d\.]+),"u":"","d":\d+\},"ReactivePower":\{"v":([\-\d\.]+),"u":"var","d":\d+\},"Efficiency":\{"v":([\-\d\.]+),"u":"%","d":\d+\}\}\},"DC":\{(("\d+":\{"name":\{"u":"\w*"\},"Power":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"Voltage":\{"v":[\-\d\.]+,"u":"V","d":\d+\},"Current":\{"v":[\-\d\.]+,"u":"A","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},?)+)\},"INV":\{"0":\{"Temperature":\{"v":([\-\d\.]+),"u":"°C","d":\d+\}\}\},"events":\d+\}/) {
     # \],"total":\{"Power":\{"v":[\-\d\.]+,"u":"W","d":\d\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},"hints":\{"time_sync":\w+,"radio_problem":\w+,"default_password":\w+\}\}
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved

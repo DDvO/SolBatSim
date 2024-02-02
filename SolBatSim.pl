@@ -915,7 +915,7 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
         $power_provided = 0 if m/^time,/ && !(m/^time,P,/);
 
         # work around CSV lines at hour 00 garbled by load&save with LibreOffice
-        $garbled_hours++ if s/^\d+:10:00,0,/20000000:0000,0,/;
+        $garbled_hours++ if s/^\d+:10:00,0,/20000000:0010,0,/;
         next unless m/^20\d\d\d\d\d\d:\d\d\d\d,/;
 
         unless (defined $power_rate || $test) {
@@ -960,7 +960,7 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
         }
 
         next if m/^20\d\d0229:/; # skip data of Feb 29th (in leap years)
-        $start_year = $1 if (!$start_year && m/^(\d\d\d\d)/);
+        $start_year = $1 if (!$start_year && m/^(\d\d\d\d)/ && $1 != 2000);
         if ($tmy && !$test) {
             # typical metereological year
             my $selected_month = 0;
@@ -982,12 +982,14 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
         $current_years++ if m/^20\d\d0101:01/;
         $months++ if m/^20....01:01/;
 
-        die "Missing power data in $file line $_"
+        die "Missing PV power data in $file line $_"
             unless m/^(\d\d\d\d)(\d\d)(\d\d):(\d\d)(\d\d),\s?([\d\.]+)/;
         my $hour_offset = $test ? 0 : TimeZone;
         my ($year, $month, $day, $hour, $minute_unused, $net_power) =
             ($tmy ? 0 : $1-$start_year, $2, $3, ($4+$hour_offset) % 24, $5, $6);
         # for simplicity, attributing hours wrapped via time zone to same day
+        # Note: for garbled CSV lines, $year, $month, and $day are wrong,
+        # which leads to missing (undefined) PV power data entries in @PV_gross
 
         $net_power *= $power_rate;
         my $gross_power = $net_power *
@@ -1607,7 +1609,7 @@ sub simulate()
                     $gross_power = $pvnet_power = $pvnet_direct = 0;
                 } else {
                     $en = 1;
-                    die "No power data ".
+                    die "No PV power data ".
                         date_hour_str($year_str, $month, $day, $hour)."h";
                 }
             }

@@ -315,6 +315,7 @@ sub http_get {
 }
 
 my $last_valid_unixtime = 0;
+my $last_3em_status_serial = 0;
 sub get_3em {
     if ($addr eq "-") {
         print "$times[$item],$loads[$item],$phases[$item]\n" if $debug;
@@ -332,7 +333,7 @@ sub get_3em {
         sleep(1) unless $1 =~ m/timed out|read timeout/;
         goto retry;
     }
-    unless ($status_json =~ /"time":"([\d:]*)","unixtime":(\d+),.*"emeters":\[\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)}\,\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\},\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\}\],"total_power":([\-\d\.]+),.*,"uptime":(\d+)/) {
+    unless ($status_json =~ /"time":"([\d:]*)","unixtime":(\d+),"serial":(\d+),.*"emeters":\[\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)}\,\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\},\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\}\],"total_power":([\-\d\.]+),.*,"uptime":(\d+)/) {
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved
             log_warn("skipping error response: $1 for 3EM"); # e.g., by Squid
@@ -344,16 +345,24 @@ sub get_3em {
         goto retry;
     }
 
-    my ($hour, $unixtime,
+    my ($hour, $unixtime, $status_serial,
         $powerA, $pfA, $currentA, $voltageA, $totalA, $total_returnedA,
         $powerB, $pfB, $currentB, $voltageB, $totalB, $total_returnedB,
         $powerC, $pfC, $currentC, $voltageC, $totalC, $total_returnedC,
         $total_power, $uptime)
-        = ($1, $2 + 0,
-           $3, $4, $5, $6, $7, $8,
-           $9, $10, $11, $12, $13, $14,
-           $15, $16, $17, $18, $19, $20,
-           $21, $22);
+        = ($1, $2 + 0, $3 + 0,
+           $4, $5, $6, $7, $8, $9,
+           $10, $11, $12, $13, $14, $15,
+           $16, $17, $18, $19, $20, $21,
+           $22, $23);
+
+    # not checking the 'serial' field because it would lead to many gaps - why?
+    if (0 && $status_serial == $last_3em_status_serial) {
+        usleep(100000);
+        goto retry;
+    }
+    $last_3em_status_serial = $status_serial;
+
     if ($unixtime) {
         $last_valid_unixtime = $unixtime;
     } elsif ($last_valid_unixtime) {

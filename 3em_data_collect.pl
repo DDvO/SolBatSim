@@ -360,9 +360,13 @@ sub get_3em {
                  ." one $last_valid_unixtime + uptime $uptime");
         $unixtime = $last_valid_unixtime + $uptime;
     } else {
-        log_warn("missing 3EM status unixtime, discarding '$status_json'");
-        sleep(1);
-        goto retry;
+        $unixtime = time();
+        unless ($unixtime) {
+            log_warn("missing 3EM status unixtime and system time, discarding '$status_json'");
+            sleep(1);
+            goto retry;
+        }
+        log_warn("missing 3EM status unixtime, taking host system time");
     }
 
     my ($date_3em, $time_3em) = date_time(time_epoch($unixtime));

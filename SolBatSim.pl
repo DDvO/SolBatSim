@@ -964,18 +964,33 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
         if ($tmy && !$test) {
             # typical metereological year
             my $selected_month = 0;
-            $selected_month = $1 if m/^2012(01)/;
-            $selected_month = $1 if m/^2013(02)/;
-            $selected_month = $1 if m/^2010(03)/;
-            $selected_month = $1 if m/^2019(04)/; # + 2 kWh
-            $selected_month = $1 if m/^2016(05)/; # + 1 kWh
-            $selected_month = $1 if m/^2015(06)/;
-            $selected_month = $1 if m/^2007(07)/;
-            $selected_month = $1 if m/^2008(08)/;
-            $selected_month = $1 if m/^2010(09)/;
-            $selected_month = $1 if m/^2019(10)/;
-            $selected_month = $1 if m/^2008(11)/;
-            $selected_month = $1 if m/^2020(12)/;
+            if ($lat eq "48.215" && $lon eq "11.727") {
+                $selected_month = $1 if m/^2007(01)/;
+                $selected_month = $1 if m/^2018(02)/;
+                $selected_month = $1 if m/^2020(03)/;
+                $selected_month = $1 if m/^2008(04)/;
+                $selected_month = $1 if m/^2011(05)/;
+                $selected_month = $1 if m/^2010(06)/;
+                $selected_month = $1 if m/^2012(07)/;
+                $selected_month = $1 if m/^2013(08)/;
+                $selected_month = $1 if m/^2012(09)/;
+                $selected_month = $1 if m/^2017(10)/;
+                $selected_month = $1 if m/^2014(11)/;
+                $selected_month = $1 if m/^2018(12)/;
+            } else {
+                $selected_month = $1 if m/^2012(01)/;
+                $selected_month = $1 if m/^2013(02)/;
+                $selected_month = $1 if m/^2010(03)/;
+                $selected_month = $1 if m/^2019(04)/; # + 2 kWh
+                $selected_month = $1 if m/^2016(05)/; # + 1 kWh
+                $selected_month = $1 if m/^2015(06)/;
+                $selected_month = $1 if m/^2007(07)/;
+                $selected_month = $1 if m/^2008(08)/;
+                $selected_month = $1 if m/^2010(09)/;
+                $selected_month = $1 if m/^2019(10)/;
+                $selected_month = $1 if m/^2008(11)/;
+                $selected_month = $1 if m/^2020(12)/;
+            }
             next unless $selected_month;
         }
         # matching hour 01 rather than 00 due to potentially garbled CSV lines:

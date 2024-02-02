@@ -927,7 +927,7 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
             # die "Missing azimuth in $file"   unless $azimuth;
             die "Missing PV power output data in $file" unless $power_provided;
 
-            unless (defined $nominal_power_deflt) {
+            unless ($nominal_power_deflt) {
                 print "\n"; # close line started with print "$pv_data_txt..."
                 die "Missing nominal PV power in command line option or $file"
                     unless $nominal_power;

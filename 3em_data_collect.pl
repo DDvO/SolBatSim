@@ -66,6 +66,7 @@ use strict;
 use warnings;
 #use IO::Null; # using IO::Null->new, print gives: print() on unopened filehandle GLOB
 use IO::Handle; # for flush
+use Time::HiRes qw(usleep);
 
 my $i = 0;
 my $out_prefix   = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_BASENAME}; # e.g., ~/3EM_
@@ -799,8 +800,6 @@ sub do_each_second {
     }
 }
 
-use Time::HiRes qw(usleep);
-
 # re-calculate due to potenital delays recovering data from any previous run:
 $start = DateTime->now(time_zone => $tz);
 my ($nseconds, $rounds) = (0, 0) if $debug;
@@ -810,7 +809,6 @@ do {
     my $first = $count_seconds == 0;
     my ($timestamp, $power, $data) = get_3em($first);
     # may include PV power, charge, and discharge
-    $power += $test_extra_power;
     my ( $pv_timestamp,  $pv_power,  $pv_data) = (0, 0, "");
     my ($chg_timestamp, $chg_power, $chg_data) = (0, 0, "");
     my ($dis_timestamp, $dis_power, $dis_data) = (0, 0, "");
@@ -818,6 +816,7 @@ do {
     if ($diff_seconds == 0) {
         print "$time: $timestamp (skipping result for same time)\n" if $debug;
     } else {
+        $power += $test_extra_power;
         $nseconds += $diff_seconds unless $first;
         if ($addr_1pm && $diff_seconds >= 1) {
             ($pv_timestamp, $pv_power, $pv_data) =

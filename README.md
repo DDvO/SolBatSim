@@ -266,7 +266,7 @@ SolBatSim.pl <load profile file> [<consumption per year in kWh>]
   [-load [min] <constant load, at same scale as in PV data file>
          [<count of days per week starting Monday, default 5>:<from hour,
           default 8 o'clock>..<to hour, default 16, also across midnight>]]
-  [-avg_hour] [-verbose]
+  [-avg_hour] [-dump_avg <PVTool load file>] [-verbose]
   [-peff <PV system efficiency in %, default from PV data file(s)>]
   [-ac | -dc] [-capacity <storage capacity in Wh, default 0 (no battery)>]
   [-pass [spill] <constant storage bypass in W in addition to 'direct PV',
@@ -295,6 +295,10 @@ All times (hours) are in local time without daylight saving (CET, GMT/UTC +1).
 
 Use `-en` for text output in English. Error messages are all in English.
 
+With `-avg_hour`, only the average of load items per hour are used.\
+With `-dump_avg`, which implies `-avg_hour`, produce PVTool load input file
+in CSV format with UTC timestamps and hourly average load data.
+
 When PV data for more than one year is given, the average is computed, while
 with the option `-tmy` months for a typical meteorological year are selected.
 
@@ -322,7 +326,7 @@ SolBatSim.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
   [-load [min] <konstante Last, auf gleicher Skala wie in der PV-Daten-Datei>
          [<Zahl der Tage pro Woche ab Montag, sonst 5>:<von Uhrzeit,
           sonst 8 Uhr>..<bis Uhrzeit, sonst 16 Uhr, auch über Mitternacht>]]
-  [-avg_hour] [-verbose]
+  [-avg_hour] [-dump_avg <PVTool-Verbrauchsdatei>] [-verbose]
   [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
   [-ac | -dc] [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>]
   [-pass [spill] <konstante Speicher-Umgehung in W zusätzlich zu 'direct' PV,
@@ -351,6 +355,10 @@ SolBatSim.pl load_4673_kWh.csv 3000 yield_1274_kWh.csv 1000 -curb 600 -tmy
 Alle Uhrzeiten sind in lokaler Winterzeit (MEZ, GMT/UTC + 1 ohne Sommerzeit).
 
 Mit `-en` erfolgen die Textausgaben auf Englisch. Fehlertexte sind englisch.
+
+Mit `-avg_hour` wird nur der stündliche Durchschnitt der Lastdaten verwendet.
+Mit `-dump_avg`, was `-avg_hour` impliziert, wird eine Last-Eingabe-Datei für
+das PVTool im CSV-Format erzeugt mit UTC-Zeitangaben und stündlichen Lastdaten.
 
 Wenn PV-Daten für mehrere Jahre gegeben sind, wird der Durchschnitt berechnet
 oder mit Option `-tmy` Monate für ein typisches meteorologisches Jahr gewählt.

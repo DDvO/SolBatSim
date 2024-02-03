@@ -12,7 +12,7 @@
 #   [-load [min] <konstante Last, auf gleicher Skala wie in der PV-Daten-Datei>
 #          [<Zahl der Tage pro Woche ab Montag, sonst 5>:<von Uhrzeit,
 #           sonst 8 Uhr>..<bis Uhrzeit, sonst 16 Uhr, auch über Mitternacht>]]
-#   [-avg_hour] [-verbose]
+#   [-avg_hour] [-dump_avg <PVTool-Verbrauchsdatei>] [-verbose]
 #   [-peff <PV-System-Wirkungsgrad in %, ansonsten von PV-Daten-Datei>]
 #   [-ac | -dc] [-capacity <Speicherkapazität Wh, ansonsten 0 (kein Batterie)>]
 #   [-pass [spill] <konstante Speicher-Umgehung in W zusätzlich zu 'direct' PV,
@@ -36,6 +36,10 @@
 #
 # Alle Uhrzeiten sind in lokaler Winterzeit (MEZ, GMT/UTC + 1 ohne Sommerzeit).
 # Mit "-en" erfolgen die Textausgaben auf Englisch. Fehlertexte sind englisch.
+#
+# Mit "-avg_hour" wird nur der stündliche Durchschnitt der Lastdaten verwendet.
+# Mit "-dump_avg", was "-avg_hour" impliziert, wird eine Last-Eingabe-Datei fürs
+# PVTool im CSV-Format erzeugt mit UTC-Zeitangaben und stündlichen Lastdaten.
 #
 # Wenn PV-Daten für mehrere Jahre gegeben sind, wird der Durchschnitt berechnet
 # oder mit Option "-tmy" Monate für ein typisches meteorologisches Jahr gewählt.
@@ -69,7 +73,7 @@
 #   [-load [min] <constant load, at same scale as in PV data file>
 #          [<count of days per week starting Monday, default 5>:<from hour,
 #           default 8 o'clock>..<to hour, default 16, also across midnight>]]
-#   [-avg_hour] [-verbose]
+#   [-avg_hour] [-dump_avg <PVTool load file>] [-verbose]
 #   [-peff <PV system efficiency in %, default from PV data file(s)>]
 #   [-ac | -dc] [-capacity <storage capacity in Wh, default 0 (no battery)>]
 #   [-pass [spill] <constant storage bypass in W in addition to 'direct PV',
@@ -92,6 +96,10 @@
 #
 # All times (hours) are in local winter time (CET, GMT/UTC +1, no daylight sv.).
 # Use "-en" for text output in English. Error messages are all in English.
+#
+# With "-avg_hour", only the average of load items per hour are used.
+# With `-dump_avg`, which implies `-avg_hour`, produce PVTool load input file
+# in CSV format with UTC timestamps and hourly average load data.
 #
 # When PV data for more than one year is given, the average is computed, while
 # with the option "-tmy" months for a typical meteorological year are selected.
@@ -134,6 +142,7 @@ my @load_factors;       # load distortion factors per hour, on top of @load_dist
 my $load_min      = 0;  # modifies $load_const to mean constant minimal load
 my $load_const;         # constant load in W, during certain times as follows:
 my $avg_hour      = 0;  # use only the average of load items per hour
+my ($DA, $dump_avg);    # file to dump average load per hour, implies $avg_hour
 my $verbose       = 0;  # verbose output, including averages/day for each hour
 my $load_days    =  5;  # count of days per week with constant load
 my $load_from    =  8;  # hour of constant load begin
@@ -251,6 +260,7 @@ while ($#ARGV >= 0) {
                                            $ARGV[0] =~ m/^(\d+):(\d+)\.\.(\d+)$/
                                            && shift @ARGV;
     } elsif ($ARGV[0] eq "-avg_hour") { $avg_hour     =  no_arg();
+    } elsif ($ARGV[0] eq "-dump_avg") { $dump_avg     = str_arg(); $avg_hour=1;
     } elsif ($ARGV[0] eq "-verbose" ) { $verbose      =  no_arg();
     } elsif ($ARGV[0] eq "-peff"    ) { $pvsys_eff    = eff_arg();
     } elsif ($ARGV[0] eq "-tmy"     ) { $tmy          =  no_arg();
@@ -1235,6 +1245,16 @@ sub simulate_item {
 
     die "Internal error: load_item[$month][$day][$hour][$item] is undefined"
         unless defined $load;
+    if ($dump_avg) {
+        # adapt CET to UTC
+        my ($m, $d, $h) = ($month, $day, $hour + 1);
+        ($d, $h) = ($d + 1, 0) if $h > 23;
+        ($m, $d) = ($m == 12 ? 1 : $m + 1, 1) if $d > $days_per_month[$m];
+        printf $DA "\"Datetime\",\"Power\"\r\n"
+            if $month == 1 && $day == 1 && $hour == 0;
+        printf $DA "%s%02d%02d:%02d,%d\r\n", $year_str, $month, $day, $hour,
+            rls($load_item[$m][$d][$h][0]);
+    }
     if ($trace) {
         printf("%s-%02d-%02d ", $year_str, $month, $day) unless $test;
         printf("%02d".minute_str($item, $items)." load=%4d PV net=%4d ",
@@ -1679,7 +1699,10 @@ sub simulate()
     }
 }
 
+open($DA,'>', $dump_avg) || die "cannot open '$dump_avg' for writing: $!"
+    if defined $dump_avg;
 simulate();
+close $DA if defined $dump_avg;
 
 my $pny = $sel_hours / $hours_a_day * $years;
 my $sny = $sn / $years;

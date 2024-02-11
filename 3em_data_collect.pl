@@ -1,16 +1,17 @@
 #!/usr/bin/perl
 
 # Collect status data reported each second by a Shelly (Pro) 3EM energy meter,
-# using the http://<addr>/status endpoint (yet not the MQTT interface) and
+# using the http://<3em_addr>/status endpoint (yet not the MQTT interface) and
 # optionally collecting PV status data reported each second by Shelly Plus 1PM
-# using the http://<addr_1pm>/rpc/Shelly.GetStatus endpoint but not MQTT.
+# using the http://<1pm_addr>/rpc/Shelly.GetStatus endpoint but not MQTT.
 # In this case, the total load reported by the 3EM energy meter is corrected
 # by adding the absolute value of the PV power reported by the 1PM power meter.
 # Optionally collect also the storage battery charger status data reported each
-# second by another Shelly Plus 1PM using http://<addr_chg>/rpc/Shelly.GetStatus
+# second by another Shelly Plus 1PM using http://<chg_addr>/rpc/Shelly.GetStatus
 # In this case, the total load is further corrected by subtracting charge power.
 # Optionally collect also the storage battery inverter status data reported
-# each second by an OpenDTU using http://<addr_dis>/api/livedata/status
+# each second by an OpenDTU using http://<dtu_addr>/api/livedata/status and/or
+# the status data of any Shelly Plus 1PM attached to the battery inverter.
 # In this case, the total load is further corrected adding the discharge power.
 #
 # Alternatively, take as input per-second load and (optional) PV power data
@@ -47,9 +48,10 @@
 # CLI options, each of which may be a value or "" indicating none/default:
 # <base_name> <power_name> <energy_name>
 # <load_min> <load_sec> <status_name> <pvstat_name> <log_name> <time_zone>
-# - |(<3em_addr> <1pm_addr> <chg_addr> <dis_addr> <dis_serial>
+# - |(<3em_addr> <1pm_addr> <chg_addr> <dis_addr> <dtu_addr> <dtu_serial>
 #     <3em_username> <3em_password> <1pm_username> <1pm_password>
-#     <chg_username> <chg_password> <dis_username> <dis_password>)
+#     <chg_username> <chg_password> <dis_username> <dis_password>
+#     <dtu_username> <dtu_password>)
 # where '-' means that data shall be read from subsequent file(s) or STDIN.
 #
 # Alternatively to providing options at the CLI, they may also be given
@@ -60,7 +62,7 @@
 # This prevents misalignment and confusion on the interpretation of timed data
 # and makes sure that the length of the daily output is the same for all days.
 #
-# (c) 2023 David von Oheimb - License: MIT
+# (c) 2023-2024 David von Oheimb - License: MIT
 
 use strict;
 use warnings;
@@ -107,7 +109,8 @@ my $addr = $ARGV[$i++] || $ENV{Shelly_3EM_ADDR}; # e.g. 192.168.178.123
 my ($url, $user, $pass);
 my ($addr_1pm, $url_1pm, $user_1pm, $pass_1pm);
 my ($addr_chg, $url_chg, $user_chg, $pass_chg);
-my ($addr_dis, $url_dis, $user_dis, $pass_dis, $serial_dis);
+my ($addr_dis, $url_dis, $user_dis, $pass_dis);
+my ($addr_dtu, $url_dtu, $user_dtu, $pass_dtu, $serial_dtu);
 if ($addr eq "-") {
     # read from power.csv file produced by Home Assistant configuration.yaml
     splice(@ARGV,0,$i);
@@ -140,11 +143,14 @@ if ($addr eq "-") {
     $addr_chg = 0 if $addr_chg eq "";
     $addr_dis = $ARGV[$i++] || $ENV{Shelly_DIS_ADDR}; # e.g. 192.168.178.126
     $addr_dis = 0 if $addr_dis eq "";
-    $serial_dis = $ARGV[$i++] || $ENV{Shelly_DIS_SERIAL}; # e.g. 112183822756
+    $addr_dtu = $ARGV[$i++] || $ENV{Shelly_DTU_ADDR}; # e.g. 192.168.178.127
+    $addr_dtu = 0 if $addr_dtu eq "";
+    $serial_dtu = $ARGV[$i++] || $ENV{Shelly_DTU_SERIAL}; # e.g. 112183822756
     $url      = "http://$addr/status";
     $url_1pm  = "http://$addr_1pm/rpc/Shelly.GetStatus" if $addr_1pm;
     $url_chg  = "http://$addr_chg/rpc/Shelly.GetStatus" if $addr_chg;
-    $url_dis  = "http://$addr_dis/api/livedata/status"  if $addr_dis; # OpenDTU
+    $url_dis  = "http://$addr_dis/rpc/Shelly.GetStatus" if $addr_dis;
+    $url_dtu  = "http://$addr_dtu/api/livedata/status"  if $addr_dtu; # OpenDTU
 
     $user     = $ARGV[$i++] || $ENV{Shelly_3EM_USER}; # HTTP username, if needed
     $pass     = $ARGV[$i++] || $ENV{Shelly_3EM_PASS}; # HTTP password, if needed
@@ -154,6 +160,8 @@ if ($addr eq "-") {
     $pass_chg = $ARGV[$i++] || $ENV{Shelly_CHG_PASS} || $pass;
     $user_dis = $ARGV[$i++] || $ENV{Shelly_DIS_USER} || $user;
     $pass_dis = $ARGV[$i++] || $ENV{Shelly_DIS_PASS} || $pass;
+    $user_dtu = $ARGV[$i++] || $ENV{Shelly_DTU_USER} || $user;
+    $pass_dtu = $ARGV[$i++] || $ENV{Shelly_DTU_PASS} || $pass;
 }
 
 my $debug = $ENV{Shelly_3EM_DEBUG} // 0;
@@ -475,7 +483,7 @@ sub get_dtu {
     }
 
     # \{"inverters":\[
-    unless ($status_json =~ /\{"serial":"$serial_dis","name":"[\w\-]+","order":\d+,"data_age":\d+,"poll_enabled":\w+,"reachable":\w+,"producing":\w+,"limit_relative":([\-\d]+),"limit_absolute":([\-\d]+),"AC":\{"0":\{"Power":\{"v":([\-\d\.]+),"u":"W","d":\d+\},"Voltage":\{"v":([\-\d\.]+),"u":"V","d":\d+\},"Current":\{"v":([\-\d\.]+),"u":"A","d":\d+\},"Power DC":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\},"Frequency":\{"v":([\-\d\.]+),"u":"Hz","d":\d+\},"PowerFactor":\{"v":([\-\d\.]+),"u":"","d":\d+\},"ReactivePower":\{"v":([\-\d\.]+),"u":"var","d":\d+\},"Efficiency":\{"v":([\-\d\.]+),"u":"%","d":\d+\}\}\},"DC":\{(("\d+":\{"name":\{"u":"\w*"\},"Power":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"Voltage":\{"v":[\-\d\.]+,"u":"V","d":\d+\},"Current":\{"v":[\-\d\.]+,"u":"A","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},?)+)\},"INV":\{"0":\{"Temperature":\{"v":([\-\d\.]+),"u":"°C","d":\d+\}\}\},"events":\d+\}/) {
+    unless ($status_json =~ /\{"serial":"$serial_dtu","name":"[\w\-]+","order":\d+,"data_age":\d+,"poll_enabled":\w+,"reachable":\w+,"producing":\w+,"limit_relative":([\-\d]+),"limit_absolute":([\-\d]+),"AC":\{"0":\{"Power":\{"v":([\-\d\.]+),"u":"W","d":\d+\},"Voltage":\{"v":([\-\d\.]+),"u":"V","d":\d+\},"Current":\{"v":([\-\d\.]+),"u":"A","d":\d+\},"Power DC":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\},"Frequency":\{"v":([\-\d\.]+),"u":"Hz","d":\d+\},"PowerFactor":\{"v":([\-\d\.]+),"u":"","d":\d+\},"ReactivePower":\{"v":([\-\d\.]+),"u":"var","d":\d+\},"Efficiency":\{"v":([\-\d\.]+),"u":"%","d":\d+\}\}\},"DC":\{(("\d+":\{"name":\{"u":"\w*"\},"Power":\{"v":[\-\d\.]+,"u":"W","d":\d+\},"Voltage":\{"v":[\-\d\.]+,"u":"V","d":\d+\},"Current":\{"v":[\-\d\.]+,"u":"A","d":\d+\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},?)+)\},"INV":\{"0":\{"Temperature":\{"v":([\-\d\.]+),"u":"°C","d":\d+\}\}\},"events":\d+\}/) {
     # \],"total":\{"Power":\{"v":[\-\d\.]+,"u":"W","d":\d\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},"hints":\{"time_sync":\w+,"radio_problem":\w+,"default_password":\w+\}\}
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved
@@ -519,7 +527,8 @@ my ($prev_pv_power, $prev_chg_power, $prev_dis_power) = (0, 0, 0);
 log_msg("start - will connect to $url"
         .($url_1pm ? " and $url_1pm" : "")
         .($url_chg ? " and $url_chg" : "")
-        .($url_dis ? " and $url_dis" : ""))
+        .($url_dis ? " and $url_dis" : "")
+        .($url_dtu ? " and $url_dtu" : ""))
     unless $addr eq "-";
 
 # try recover data from any previous run
@@ -549,7 +558,7 @@ if ($addr ne "-" && $out_load_sec) {
 
         my $count = -1;
         my @pv_power = ("");
-        if ($addr_1pm) { # TODO also for addr_chg and addr_dis   
+        if ($addr_1pm) { # TODO also for addr_chg and (addr_dis or addr_dtu)   
             if ($out_pvstat) {
                 my $pvstat = out_name($out_pvstat, $date, ".csv");
                 if (open(my $PO, '<' ,$pvstat)) {
@@ -675,19 +684,19 @@ sub do_before_day {
    "powerB [W],pfB,currentB [A],voltageB [V],totalB [Wh],total_returnedB [Wh],".
    "powerC [W],pfC,currentC [A],voltageC [V],totalC [Wh],total_returnedC [Wh]\n"
         if -z $status; # on empty status output CSV file, add header
-    print $PO "time [$tz],PV power [W],".
-        "voltage [V],current [A],total [Wh],temperature [°C]\n"
+    my $pm_data_header = "voltage [V],current [A],total [Wh],temperature [°C]";
+    print $PO "time [$tz],PV power [W],$pm_data_header\n"
         if -z $pvstat; # on empty PV output CSV file, add header
-    print $CH "time [$tz],charger power [W],".
-        "voltage [V],current [A],total [Wh],temperature [°C]\n"
+    print $CH "time [$tz],charge power [W],$pm_data_header\n"
         if -z $chgstat; # on empty charger output CSV file, add header
-    print $DS "time [$tz],discharge power [W],limit [W],limit [%],".
-        "voltage [V],current [A],frequency [Hz],power factor,".
-        "reactive power [var],efficiency [%], temperature [°C],".
-        "string 0 power [W],string 0 voltage [V],string 0 current [A],".
-        "string 0 yield day [Wh],string 0 yield total [kWh],".
-        "string 1 power [W],string 1 voltage [V],string 1 current [A],".
-        "string 1 yield day [Wh],string 1 yield total [kWh]\n"
+    print $DS "time [$tz],discharge power [W],".
+        (!$addr_dtu ? "$pm_data_header" : "limit [W],limit [%],".
+         "voltage [V],current [A],frequency [Hz],power factor,".
+         "reactive power [var],efficiency [%], temperature [°C],".
+         "string 0 power [W],string 0 voltage [V],string 0 current [A],".
+         "string 0 yield day [Wh],string 0 yield total [kWh],".
+         "string 1 power [W],string 1 voltage [V],string 1 current [A],".
+         "string 1 yield day [Wh],string 1 yield total [kWh]")."\n"
         if -z $disstat; # on empty discharge output CSV file, add header
     print $PW "time [$tz],load [W],PV power [W],charge power [W],".
         "discharge power [W],powerA [W],powerB [W],powerC [W]\n"
@@ -892,10 +901,24 @@ do {
                 $chg_power = $prev_chg_power;
             }
         }
-        if ($addr_dis && $diff_seconds >= 1) {
+        if (($addr_dis || $addr_dtu) && $diff_seconds >= 1) {
+            my $dtu_timestamp = 0;
             ($dis_timestamp, $dis_power, $dis_data) =
-                get_dtu("discharge", $timestamp, $url_dis, $user_dis, $pass_dis);
-            if ($dis_timestamp) {
+                get_1pm("discharge data from 1PM", $timestamp, $url_dis,
+                        $user_dis, $pass_dis) if ($addr_dis);
+            ($dtu_timestamp, my $dtu_power, my $dtu_data) =
+                get_dtu("discharge data from DTU", $timestamp, $url_dtu,
+                        $user_dtu, $pass_dtu) if ($addr_dtu);
+            if ($dis_timestamp || $dtu_timestamp) {
+                if ($dtu_timestamp) {
+                    if ($dis_timestamp) {
+                        $dis_data = $dtu_data;
+                        # timestamp and power preferred from more correct 1PM
+                    } else {
+                        ($dis_timestamp, $dis_power, $dis_data) =
+                            ($dtu_timestamp, $dtu_power, $dtu_data);
+                    }
+                }
                 $dis_power = 0 if 0 < $dis_power
                     && $dis_power < 0.5;  # suppress flicker < 0.5 W on standby
             } else {
@@ -953,3 +976,6 @@ do {
  end:
 --$item;
 cleanup();
+
+# Local IspellDict: american
+# LocalWords: addr pm chg dtu em pvstat chgstat disstat dis

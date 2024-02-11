@@ -38,7 +38,8 @@ adding the absolute value of the PV power input reported by the 1PM power meter.
 status data reported each second by another Shelly Plus 1PM. In this case,
 the total load is further corrected by subtracting the battery charge power.\
 * Optionally, with AC-coupled storage, it collects also
-the discharge inverter data reported each second by an OpenDTU.
+the discharge inverter data reported each second by an OpenDTU
+and/or the status data of any Shelly Plus 1PM attached to the battery inverter.
 In this case, the total load is further corrected adding the discharge power.
 
 Alternatively, the script takes its input from per-second
@@ -52,7 +53,7 @@ total load value obtained by summing up the load values of the three phases.
   which is well suited as SolBatSim input file,
 * and another file per year with
 a record per hour of
-the energy consumption, production and self-consmption (if any), balance,
+the energy consumption, production and self-consumption (if any), balance,
 the imported energy and exported energy (obtained by accumulating
 the positive/negative per-second power balance values over the given hour),
 the charged and discharged energy (if any), as well as the voltage
@@ -123,13 +124,21 @@ ein sekundenweises Protokoll der Lastdaten und ggf. der PV-Erzeugungsleistung,
 welches dann mit dem folgenden Skript weiter verarbeitbar ist.
 
 [Dieses Perl-Skript](3em_data_collect.pl​) liest die sekündlichen Status-Daten
-eines Energiemessgeräts Shelly (Pro) 3EM kontinuierlich aus. Es kann sie mit den
-Status-Daten eines Shelly Plus 1PM verknüpfen, der die Leistung einer kleinen
+eines Energiemessgeräts Shelly (Pro) 3EM kontinuierlich aus.
+* Es kann diese Daten mit den Status-Daten eines Shelly Plus 1PM verknüpfen,
+der die Leistung einer kleinen
 PV-Anlage misst, indem es als Haushalts-Last die Summe aus der saldierten
-Leistung am Energiemessgerät und dem Absolutbetrag der PV-Leistung bildet.\
-Zusätzlich kann es eines weiteren Shelly Plus 1PM berücksichigen, der die
-vom Ladegerät einer AC-gekoppelten Speicherbatterie bezogene Leistung misst.\
-Alternativ verarbeitet es als Eingabe
+Leistung am Energiemessgerät und dem Absolutbetrag der PV-Leistung bildet.
+* Zusätzlich kann es die Daten eines weiteren Shelly Plus 1PM berücksichtigen,
+der die vom Ladegerät einer AC-gekoppelten Speicherbatterie aufgenommene
+Leistung misst, und zieht in diesem Fall die Ladeleistung von der Gesamtlast ab.
+* Es kann bei einer AC-gekoppelten Speicherung auch sekündlich die Statusdaten
+verarbeiten, die von einem Batteriewechselrichter über OpenDTU
+und/oder von einem damit verbundenen Shelly Plus 1PM geliefert werden.
+In diesem Fall wird die Gesamtlast durch Addition der Entladeleistung angepasst.
+
+
+Alternativ verarbeitet das Skript als Eingabe
 sekündliche Last- und ggf. PV-Leistungsdaten, die z.B. vom Home Assistant
 mit [configuration.yaml](configuration.yaml) erzeugt wurden.\
 Es kann folgende Daten abspeichern:
@@ -380,6 +389,6 @@ Local IspellDict: german8
 LocalWords: pl load csv yield direct only Mon dist ac debug em mon stat Datetime
 LocalWords: bend avg hour verbose peff dc capacity spill feed min en lim comp
 LocalWords: excl charge discharge ceff seff ieff test tmy data collect curb day
-LocalWords: week month season cron job mdash configuration yaml
+LocalWords: week month season cron job mdash configuration yaml dump
 LocalWords:
 -->

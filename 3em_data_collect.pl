@@ -307,11 +307,10 @@ sub http_get {
     my $resp = $ua->request($req);
     if ($resp->is_success) {
         # print "HTTP GET response: ".$resp->decoded_content."\n";
+        return $resp->content;
     }
-    else {
-        print "HTTP GET status: ", $resp->code, ", err: ", $resp->message, "\n";
-    }
-    return $resp->content;
+    # print "HTTP GET status: ", $resp->code, ", err: ", $resp->message, "\n";
+    return $resp->message;
 }
 
 my $last_valid_unixtime = 0;
@@ -328,7 +327,8 @@ sub get_3em {
   retry:
     ($date, $time) = date_time_now();
     my $status_json = http_get($url, $user, $pass);
-    if ($status_json =~ m/(Network is unreachable|No route to host|Can't connect|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
+    if ($status_json =~ m/(Network is unreachable|No route to host|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
+        # e.g.: "Can't connect to 3em:80 (Operation timed out)"
         log_warn("$1 for 3EM");
         sleep(1) unless $1 =~ m/timed out|read timeout/;
         goto retry;
@@ -417,7 +417,8 @@ sub get_1pm {
     my ($unixtime, $power, $data) = (0, 0, ""); # default: no current data
 
     my $status_json = http_get($url, $user, $pass);
-    if ($status_json =~ m/(Network is unreachable|No route to host|Can't connect|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
+    if ($status_json =~ m/(Network is unreachable|No route to host|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
+        # e.g.: "Can't connect to pm1:80 (Operation timed out)"
         log_warn("$1 for $name");
         goto end;
     }
@@ -466,7 +467,8 @@ sub get_dtu {
 
     my $data = "";
     my $status_json = http_get($url, $user, $pass);
-    if ($status_json =~ m/(Network is unreachable|No route to host|Can't connect|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
+    if ($status_json =~ m/(Network is unreachable|No route to host|Server closed connection|Connection reset by peer|(Connection|Operation) timed out|read timeout)/) {
+        # e.g.: "Can't connect to dtu:80 (Operation timed out)"
         log_warn("$1 for $name");
         $timestamp = 0;
         goto end;

@@ -512,6 +512,8 @@ my $load_sum_minute = 0;
 my ($prev_power, $prev_timestamp) = (0, 0);
 # may include PV power, charge, and discharge
 # my $prev = "";
+
+# previous plausible (i.e., non-negative) values:
 my ($prev_pv_power, $prev_chg_power, $prev_dis_power) = (0, 0, 0);
 
 log_msg("start - will connect to $url"
@@ -708,15 +710,47 @@ sub do_before_hour {
     print $LS $date_time_out;
 }
 
+my $prev_load =  0;
 sub do_each_second {
-    my ($timestamp, $power, $data, $pv_power, $pv_data,
+    my ($timestamp, $powers_ok, $power, $data, $pv_power, $pv_data,
         $chg_power, $chg_data, $dis_power, $dis_data) = @_;
+    my $pvpower  =  $pv_power ? sprintf("%5.1f",  $pv_power) : "    0";
+    my $chgpower = $chg_power ? sprintf("%5.1f", $chg_power) : "    0";
+    my $dispower = $dis_power ? sprintf("%5.1f", $dis_power) : "    0";
+
     my $load = $power + $pv_power - $chg_power + $dis_power;
-    my $pv_used = min($load, $pv_power);
-    log_warn(       "load is not positive: $load"     ) unless  $load > 0;
-    log_warn(       "PV power is negative: $pv_power" ) if  $pv_power < 0;
-    log_warn(   "charge power is negative: $chg_power") if $chg_power < 0;
-    log_warn("discharge power is negative: $dis_power") if $dis_power < 0;
+    $powers_ok &&=
+        $load > 0 && $pv_power >= 0 && $chg_power >= 0 && $dis_power >= 0;
+    if ($powers_ok) {
+        $prev_load = $load;
+    } else {
+        my $r = $load > 0 ? "not from current plausible data" : "not positive";
+        my $l = sprintf("%.2f", $load);
+        log_warn("load is $r: $l; substituting previous value $prev_load");
+        $load = $prev_load;
+    }
+    if ($pv_power >= 0) {
+        $prev_pv_power = $pv_power;
+    } else {
+        log_warn("PV power is negative: $pv_power; ".
+                 "substituting for energy the previous value $prev_pv_power");
+        $pv_power = $prev_pv_power;
+    }
+    my $pv_own_used = min($load, $pv_power);
+    if ($chg_power >= 0) {
+        $prev_chg_power = $chg_power;
+    } else {
+        log_warn("charge power is negative: $chg_power; ".
+                 "substituting for energy the previous value $prev_chg_power");
+        $chg_power = $prev_chg_power;
+    }
+    if ($dis_power >= 0) {
+        $prev_dis_power = $dis_power;
+    } else {
+        log_warn("discharge power is negative: $dis_power; ".
+                 "substituting for energy the previous value $prev_dis_power");
+        $dis_power = $prev_dis_power;
+    }
     my $time = time_epoch($timestamp);
     my ($date_3em    , $time_3em    ) = date_time($time);
     my ($date_3em_out, $time_3em_out) = date_time_out($time);
@@ -730,7 +764,7 @@ sub do_each_second {
     $energy_produced_this_hour += $pv_power;
      $energy_charged_this_hour += $chg_power;
   $energy_discharged_this_hour += $dis_power;
-    $energy_own_used_this_hour += $pv_used; # self-consumption
+    $energy_own_used_this_hour += $pv_own_used; # self-consumption
     $energy_balanced_this_hour += $power;
 # https://www.promotic.eu/en/pmdoc/Subsystems/Comm/PmDrivers/IEC62056_OBIS.htm
 # https://de.wikipedia.org/wiki/Stromz%C3%A4hler Zweirichtungszähler für
@@ -739,10 +773,7 @@ sub do_each_second {
         if $power > 0; # Positive active energy, energy meter register 1.8.0
     $energy_exported_this_hour -= $power
         if $power < 0; # Negative active energy, energy meter register 2.8.0
-    print $LS ",".round($load);
-    my $pvpower  =  $pv_power ? sprintf("%5.1f",  $pv_power) : "    0";
-    my $chgpower = $chg_power ? sprintf("%5.1f", $chg_power) : "    0";
-    my $dispower = $dis_power ? sprintf("%5.1f", $dis_power) : "    0";
+    print $LS ",".round($load) if $powers_ok;  # suppress unclear load values
     print $SO "$time_3em_out,$pvpower,$chgpower,$dispower,"
         .sprintf("%+6.2f", $power)."$data\n";
     print $PO "$time_3em_out,$pvpower$pv_data\n";
@@ -758,7 +789,8 @@ sub do_each_second {
     }
     my $date_time_out = $date_3em_out.$date_time_sep_out.$time_3em_out;
     print $PW "$date_time_out,".sprintf("%7.2f", $load)
-        .",$pvpower,$chgpower,$dispower$data\n";
+        .",$pvpower,$chgpower,$dispower$data\n"
+        if $powers_ok;  # suppress unclear power values
 
     if (!$first && $time_3em =~/:59$/) { # end of each minute
         print $LM ",".round($load_sum_minute / SECONDS_PER_MINUTE);
@@ -827,17 +859,21 @@ do {
     if ($diff_seconds == 0) {
         print "$time: $timestamp (skipping result for same time)\n" if $debug;
     } else {
+        my $powers_ok = 1;
         $power += $test_extra_power;
         $nseconds += $diff_seconds unless $first;
         if ($addr_1pm && $diff_seconds >= 1) {
             ($pv_timestamp, $pv_power, $pv_data) =
                 get_1pm("PV", $timestamp, $url_1pm, $user_1pm, $pass_1pm);
-            $pv_power = 0 if $pv_power < 0.9; # inverter drags ~0.7 W on standby
-            $pv_power += $test_extra_pv_power;
-               $power -= $test_extra_pv_power;
-            if (!$pv_timestamp) {
+            if ($pv_timestamp) {
+                $pv_power = 0 if 0 < $pv_power
+                    && $pv_power < 0.9;  # inverter drags ~0.7 W on standby
+                $pv_power += $test_extra_pv_power;
+                $power -= $test_extra_pv_power;
+            } else {
+                $powers_ok = 0;
                 log_warn("taking previous PV power value $prev_pv_power "
-                         ."as no current PV status data available from 1PM");
+                         ."as no current PV status data available");
                 ++$count_1pm_miss;
                 $pv_power = $prev_pv_power;
             }
@@ -845,8 +881,11 @@ do {
         if ($addr_chg && $diff_seconds >= 1) {
             ($chg_timestamp, my $chg, $chg_data) =
                 get_1pm("charger", $timestamp, $url_chg, $user_chg, $pass_chg);
-            $chg_power = max(0, $chg - 2.5); # HLG-600H drags ~2.4 W on standby
-            if (!$chg_timestamp) {
+            if ($chg_timestamp) {
+                $chg_power = max(0, $chg - 2.5) # HLG-600H drags ~2.4 W on standby
+                    if $chg_power > 0;
+            } else {
+                $powers_ok = 0;
                 log_warn("taking previous charge power value $prev_chg_power "
                          ."as no current status data available from charger");
                 ++$count_chg_miss;
@@ -856,9 +895,13 @@ do {
         if ($addr_dis && $diff_seconds >= 1) {
             ($dis_timestamp, $dis_power, $dis_data) =
                 get_dtu("discharge", $timestamp, $url_dis, $user_dis, $pass_dis);
-            if (!$dis_timestamp) {
+            if ($dis_timestamp) {
+                $dis_power = 0 if 0 < $dis_power
+                    && $dis_power < 0.5;  # suppress flicker < 0.5 W on standby
+            } else {
+                $powers_ok = 0;
                 log_warn("taking previous discharge power value $prev_dis_power"
-                         ." as no current status data available from DTU");
+                         ." as no current status data available");
                 ++$count_dis_miss;
                 $dis_power = $prev_dis_power;
             }
@@ -876,7 +919,7 @@ do {
                 $prev_pv_power += $pv_power_step;
                 $prev_chg_power += $chg_power_step;
                 $prev_dis_power += $dis_power_step;
-                do_each_second(++$prev_timestamp,
+                do_each_second(++$prev_timestamp, $powers_ok,
                                $prev_power, "", $prev_pv_power, "",
                                $prev_chg_power, "", $prev_dis_power, "");
             }
@@ -885,14 +928,16 @@ do {
             log_warn("skipping status entry due to negative 3EM unixtime difference: $diff_seconds");
             $timestamp = $prev_timestamp;
         } else {
-            do_each_second($timestamp, $power, ",$data", $pv_power, ",$pv_data",
+            do_each_second($timestamp, $powers_ok,
+                           $power, ",$data", $pv_power, ",$pv_data",
                            $chg_power, ",$chg_data", $dis_power, ",$dis_data");
         }
     }
 
-    $prev_pv_power = $pv_power;
-    $prev_chg_power = $chg_power;
-    $prev_dis_power = $dis_power;
+    # handled by do_each_second:
+    # $prev_pv_power = $pv_power;
+    # $prev_chg_power = $chg_power;
+    # $prev_dis_power = $dis_power;
     $prev_power = $power;
     $prev_timestamp = $timestamp;
     # $prev = $time;

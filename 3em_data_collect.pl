@@ -462,9 +462,12 @@ sub get_1pm {
     print "($time, $hour, $unixtime, $name $time_1pm, $power, $data)\n"
         if $debug;
 
-    log_warn("$name status minute_ts '$date_1pm"."$date_time_sep$time_1pm' ".
-             "does not very closely match 3EM timestamp '$date"."$date_time_sep$time'")
-        unless abs($unixtime - $timestamp) <= 3; # 3 seconds diff can happen easily
+    my $date_time_1pm = $date_1pm.$date_time_sep.$time_1pm;
+    my $date_time_3em = $date    .$date_time_sep.$time;
+    log_warn("$name status minute_ts '$date_time_1pm' ".
+             "does not very closely match 3EM timestamp '$date_time_3em'")
+        unless abs($unixtime - $timestamp) <= 3  # 3 seconds diff can happen easily
+        || ($date_time_1pm eq ($date_time_3em =~ s/:\d\d$/:00/r));
   end:
     return ($unixtime, $power, $data);
 }

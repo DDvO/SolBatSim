@@ -22,12 +22,23 @@ this simulator may be used as a reference for comparing PV simulations.
 Load profiles may be taken from public sources such as [HTW Berlin](
 https://solar.htw-berlin.de/elektrische-lastprofile-fuer-wohngebaeude/)
 or obtained locally using a suitable local digital metering device,
-such as a digital 'smart meter' or a Shelly (Pro) 3EM energy meter.
-The home automation software [Home Assistant](https://www.home-assistant.io/),
-which may continuously run on a micro controller or a home server.
-With the definitions in [this YAML configuration file](configuration.yaml),
-it can produce both a per-minute load and PV power profile and a per-second
-protocol, which may be post-processed with the following Perl script.
+such as a digital 'smart meter' or a Shelly (Pro) 3EM energy meter.\
+Using such a Shelly device and the definitions in [this YAML configuration file](
+https://github.com/DDvO/SolBatHome/blob/master/configuration.yaml),
+the home automation software [Home Assistant](https://www.home-assistant.io/),
+running continuously on a micro controller or a home server, can produce
+a per-minute load and PV power profile as well as a per-second protocol
+in CSV format, which may be post-processed by the following Perl script.
+<!--
+This can be used to log per hour in a CSV file
+the energy consumed and possibly produced by a PV system.
+This includes also the directly used solar energy (own consumption),
+the overall energy balance (net metering),
+as well as the energy imported and exported (two-way metering).
+In case a buffer battery is present,
+also the energy charged and discharged can be included, as well as
+the state of charge of the energy storage at the end of the given hour.
+-->
 
 [This Perl script](3em_data_collect.pl) gathers the status data
 reported each second by a Shelly (Pro) 3EM energy meter.
@@ -44,7 +55,8 @@ In this case, the total load is further corrected adding the discharge power.
 
 Alternatively, the script takes its input from per-second
 load and (optional) PV power data obtained,
-e.g., using Home Assistant with [configuration.yaml](configuration.yaml).
+e.g., using Home Assistant with [configuration.yaml](
+https://github.com/DDvO/SolBatHome/blob/master/configuration.yaml).
 * The script can save the per-second status data in a file per day, including a
 total load value obtained by summing up the load values of the three phases.
 * It can also produce another file per day with load and PV power per second,
@@ -117,11 +129,22 @@ Lastprofil-Dateien sollten folgendes Format haben:
 Lastprofile des eigenen Haushalts können mit geeigneten digitalen Stromzählern
 erzeugt werden oder mit einem Energiemessgeräts wie dem Shelly (Pro) 3EM und der
 Hausautomatisierungs-Software [Home Assistant](https://www.home-assistant.io/),
-welche z.B. auf einem Mikrocontroller oder einem Heimserver ständig laufen kann.
-Mit Hilfe der Definitionen in [dieser YAML-Konfiguration](configuration.yaml)
-kann sowohl ein minutenweises Ertrags- und Lastprofil erzeugt werden als auch
-ein sekundenweises Protokoll der Lastdaten und ggf. der PV-Erzeugungsleistung,
-welches dann mit dem folgenden Skript weiter verarbeitbar ist.
+welche üblicherweise auf einem Mikrocontroller oder einem Heimserver ständig
+läuft. Mit Hilfe der Definitionen in [dieser YAML-Konfiguration](
+https://github.com/DDvO/SolBatHome/blob/master/configuration.yaml)
+kann sowohl ein minutenweises Ertrags- und Lastprofil im CSV-Format erzeugt
+werden als auch ein sekundenweises Protokoll der Lastdaten und ggf. der
+PV-Leistung, welches dann mit dem folgenden Skript weiter verarbeitbar ist.
+<!--
+Damit kann man die vom Haushalt verbrauchte und ggf. mit einer PV-Anlage
+erzeugte Energie stundenweise in einer CSV-Datei protokollieren lassen,
+inklusive des dabei erzielten PV-Eigenverbrauchs, der Gesamt-Energiebilanz,
+sowie der importierten und exportierten Energie,
+wie sie auch von einen Zweiwegezähler geliefert wird.
+Bei Verwendung eines Batteriespeichers
+kann auch die gespeicherte und entladene Energie protokolliert werden
+sowie der Ladezustand jeweils zum Ende der vollen Stunde.
+-->
 
 [Dieses Perl-Skript](3em_data_collect.pl​) liest die sekündlichen Status-Daten
 eines Energiemessgeräts Shelly (Pro) 3EM kontinuierlich aus.
@@ -137,10 +160,10 @@ verarbeiten, die von einem Batteriewechselrichter über OpenDTU
 und/oder von einem damit verbundenen Shelly Plus 1PM geliefert werden.
 In diesem Fall wird die Gesamtlast durch Addition der Entladeleistung angepasst.
 
-
 Alternativ verarbeitet das Skript als Eingabe
 sekündliche Last- und ggf. PV-Leistungsdaten, die z.B. vom Home Assistant
-mit [configuration.yaml](configuration.yaml) erzeugt wurden.\
+mit [configuration.yaml](
+https://github.com/DDvO/SolBatHome/blob/master/configuration.yaml) erzeugt wurden.\
 Es kann folgende Daten abspeichern:
 * In einer Datei pro Tag alle Statusdaten je Sekunde aus dem Energiemessgerät
   für die drei Phasen und die saldierte Leistung,

@@ -1453,7 +1453,8 @@ sub simulate_hour {
 
     my ($hpv_used, $hgrid_feed, $hdis_feed) = (0, 0, 0);
     my $hpv_use_loss = 0 if $curb;
-    my ($hcharge_delta, $hdischg_delta, $hcpl_loss) = (0, 0, 0) if $capacity;
+    my ($hcharge_delta, $hdischg_delta, $hcpl_loss) = (0, 0, 0)
+        if defined $capacity;
     # my $needed = 0;
 
     # calculate statistics on PV gross power
@@ -1493,7 +1494,6 @@ sub simulate_hour {
         $PV_loss_capa = $PV_loss * $charge_eff * $storage_eff;
         $PV_loss_capa *= $inverter_eff if $AC_coupled;
 
-        # just approximate if defined $capacity:
         $PV_loss *= $charge_eff * $storage_eff * $inverter2_eff
             if defined $bypass && $bypass < $PV_loss;
     }
@@ -1522,7 +1522,7 @@ sub simulate_hour {
         ($hpv_used += $pvu, $hgrid_feed += $gfi, $hdis_feed += $dfi);
         $hpv_use_loss += $pul if $curb;
         $grid_feed_max_hour[$hour] = max($grid_feed_max_hour[$hour], $gfi);
-        if ($capacity) {
+        if (defined $capacity) {
             $charge_max_hour[$hour] = max($charge_max_hour[$hour], $chg);
             $dischg_max_hour[$hour] = max($dischg_max_hour[$hour], $dis);
             $hcharge_delta += $chg;

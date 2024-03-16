@@ -1103,7 +1103,8 @@ my @grid_feed_per_hour = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
 my @grid_feed_max_hour = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
 my @grid_feed;
 my $grid_feed_sum = 0;
-my $dis_feed_sum = 0; # grid feed-in via inefficient storage discharge
+my $dis_feed_sum = 0
+    if defined $capacity; # grid feed-in via inefficient storage discharge
 
 my $soc_max = $capacity *      $max_soc  if defined $capacity;
 my $soc_min = $capacity * (1 - $max_dod) if defined $capacity;
@@ -1552,11 +1553,9 @@ sub simulate_hour {
         # revert factoring out $items for optimizing the inner loop
         $hpv_used /= $items;
         $hgrid_feed /= $items;
-        $hdis_feed /= $items;
     }
     $PV_used_sum += $hpv_used;
     $grid_feed_sum += $hgrid_feed;
-    $dis_feed_sum  += $hdis_feed;
 
     if (defined $capacity) {
         if ($items != 1) {
@@ -1565,6 +1564,7 @@ sub simulate_hour {
             $soc_max /= $items;
             $soc_min /= $items;
             $soc_max_reached /= $items;
+            $hdis_feed /= $items;
             $soc /= $items;
             $charging_loss /= $items;
             $hcpl_loss /= $items;
@@ -1573,6 +1573,7 @@ sub simulate_hour {
             $hcharge_delta /= $items;
             $hdischg_delta /= $items;
         }
+        $dis_feed_sum  += $hdis_feed;
         $charge_sum += $hcharge_delta;
         $dischg_sum += $hdischg_delta;
         $coupling_loss += $hcpl_loss;
@@ -1675,7 +1676,6 @@ sub simulate()
     $PV_use_loss_sum *= $load_scale / $years if $curb;
     $PV_used_sum *= $load_scale / $years;
     $grid_feed_sum *= $load_scale / $years;
-    $dis_feed_sum  *= $load_scale / $years;
     # $sum_needed = rls($sum_needed);
     # die "Internal error: load sum = $load_sum vs. needed = $sum_needed"
     #     if $load_sum != $sum_needed;
@@ -1690,6 +1690,7 @@ sub simulate()
         $soc_max_reached *= $load_scale_never_0;
         $soc     *= $load_scale;
         # also average storage-related sums over $years:
+        $dis_feed_sum        *= $load_scale / $years;
         $charge_sum          *= $load_scale / $years;
         $dischg_sum          *= $load_scale / $years;
         $charging_loss       *= $load_scale / $years;

@@ -1139,14 +1139,10 @@ my $coupling_loss = 0 if defined $capacity;
 
 sub simulate_charge {
     my ($pv_used, $grid_feed_in, $maybe_loss, $power_needed,
-        $unused_bypass, $excess_power, $gross_power,
+        $unused_bypass, $excess_power,
         $year_str, $month, $day, $hour, $item, $items,
         $trace, $PV_loss) = @_;
     my $charge_delta = 0;
-    # when charging is DC-coupled, no loss through inverter:
-    $excess_power = $gross_power * $pvsys_eff
-        - ($pv_used + $grid_feed_in) / $inverter_eff_never_0
-        if $DC_coupled;
 
     my $capacity_to_fill = $soc_max - $soc;
     $capacity_to_fill = 0 if $capacity_to_fill < 0;
@@ -1308,11 +1304,15 @@ sub simulate_item {
     my $PV_loss_curr = $PV_loss if $PV_loss != 0;
     if (defined $capacity) { # storage present
         $PV_loss_curr = $PV_loss_capa if $PV_loss != 0 && $maybe_loss == 0;
+        # when charging is DC-coupled, no loss through inverter:
+        $excess_power = $gross_power * $pvsys_eff
+            - ($pv_used + $grid_feed_in) / $inverter_eff_never_0
+            if $DC_coupled;
 
         ($charge_delta, $pv_used, $grid_feed_in, $maybe_loss, $power_needed,
          my $trace_charge) =
             simulate_charge($pv_used, $grid_feed_in, $maybe_loss, $power_needed,
-                            $unused_bypass, $excess_power, $gross_power,
+                            $unused_bypass, $excess_power,
                             $year_str, $month, $day, $hour, $item, $items,
                             $trace, $PV_loss);
 

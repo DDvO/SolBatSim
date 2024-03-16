@@ -452,11 +452,15 @@ sub check_consistency { my ($actual, $expected, $name, $file) = @_;
 my $none_txt    = $en ? "none"                  : "keine";
 my $no_time_txt = $en ? "at no time"            : "zu keiner Zeit";
 
-sub date_hour_str { my ($year, $month, $day, $hour) = @_;
+sub date_str { my ($year, $month, $day) = @_;
     $year = "*" if $year eq "0";
     my $at_txt = $en ? "at" : "am";
     # to support switching language of error output must not evaluate $en before
-    return "$at_txt $year-".sprintf("%02d", $month)."-".sprintf("%02d", $day).
+    return "$at_txt $year-".sprintf("%02d", $month)."-".sprintf("%02d", $day);
+}
+sub date_hour_str { my ($year, $month, $day, $hour) = @_;
+    # to support switching language of error output must not evaluate $en before
+    return date_str($year, $month, $day).
         " ".($en ? "at" : "um")." ".sprintf("%02d", $hour);
 }
 sub minute_str { my ($item, $items) = @_;
@@ -1096,6 +1100,11 @@ my $PV_use_loss_hours = 0 if $curb;
 my @PV_used_by_item;
 my @PV_used;
 my $PV_used_sum = 0;
+my @PV_excess_by_item if $max;
+my @PV_excess;
+my $PV_excess_sum = 0;
+my $PV_excess_max = 0; # per day
+my $PV_excess_max_time = $no_time_txt;
 my $PV_used_via_storage = 0;
 
 my @grid_feed_by_item if $max;
@@ -1274,6 +1283,7 @@ sub simulate_item {
     if ($excess_power < 0) {
         $maybe_loss = -$excess_power if $curb;
         $pv_taken = $pvnet_power;
+        $excess_power = 0;
     }
 
     # $pv_used locally accumulates PV own consumption
@@ -1428,6 +1438,7 @@ sub simulate_item {
     }
     if ($max) {
         $PV_used_by_item  [$month][$day][$hour][$item] += $pv_used;
+        $PV_excess_by_item[$month][$day][$hour][$item] += $excess_power;
         $grid_feed_by_item[$month][$day][$hour][$item] += $grid_feed_in;
     }
 
@@ -1442,7 +1453,7 @@ sub simulate_item {
     }
     printf "\n" if $trace;
 
-    return ($pv_used, $pv_use_loss, $grid_feed_in, $dis_feed_in,
+    return ($pv_used, $pv_use_loss, $excess_power, $grid_feed_in, $dis_feed_in,
             $charge_delta, $dischg_delta, $coupling_loss);
 
 }
@@ -1451,9 +1462,9 @@ sub simulate_hour {
     my ($year_str, $year, $month, $day, $hour,
         $gross_power, $pvnet_power, $pvnet_direct) = @_;
 
-    my ($hpv_used, $hgrid_feed, $hdis_feed) = (0, 0, 0);
+    my ($hpv_used, $hexcess, $hgrid_feed ) = (0, 0, 0);
     my $hpv_use_loss = 0 if $curb;
-    my ($hcharge_delta, $hdischg_delta, $hcpl_loss) = (0, 0, 0)
+    my ($hdis_feed, $hcharge_delta, $hdischg_delta, $hcpl_loss) = (0, 0, 0, 0)
         if defined $capacity;
     # my $needed = 0;
 
@@ -1515,14 +1526,15 @@ sub simulate_hour {
     my $trace = $test ? ($day - 1) * 24 + $hour >= TEST_START : $debug;
     # my $feed_sum = 0 if defined $max_feed_scaled_by_eff;
     for (my $item = 0; $item < $items; $item++) {
-        my ($pvu, $pul, $gfi, $dfi, $chg, $dis, $cpl) =
+        my ($pvu, $pul, $excess_power, $gfi, $dfi, $chg, $dis, $cpl) =
         simulate_item($year_str, $month, $day, $hour,
                       $gross_power, $pvnet_power, $pvnet_direct,
                       $item, $items, $trace, $PV_loss, $PV_loss_capa);
-        ($hpv_used += $pvu, $hgrid_feed += $gfi, $hdis_feed += $dfi);
+        ($hpv_used += $pvu, $hexcess += $excess_power, $hgrid_feed += $gfi);
         $hpv_use_loss += $pul if $curb;
         $grid_feed_max_hour[$hour] = max($grid_feed_max_hour[$hour], $gfi);
         if (defined $capacity) {
+            $hdis_feed += $dfi;
             $charge_max_hour[$hour] = max($charge_max_hour[$hour], $chg);
             $dischg_max_hour[$hour] = max($dischg_max_hour[$hour], $dis);
             $hcharge_delta += $chg;
@@ -1551,9 +1563,11 @@ sub simulate_hour {
     if ($items != 1) {
         # revert factoring out $items for optimizing the inner loop
         $hpv_used /= $items;
+        $hexcess /= $items;
         $hgrid_feed /= $items;
     }
-    $PV_used_sum += $hpv_used;
+    $PV_used_sum   += $hpv_used;
+    $PV_excess_sum += $hexcess;
     $grid_feed_sum += $hgrid_feed;
 
     if (defined $capacity) {
@@ -1579,6 +1593,7 @@ sub simulate_hour {
     }
 
     $PV_used   [$month][$day][$hour] += $hpv_used;
+    $PV_excess [$month][$day][$hour] += $hexcess;
     $grid_feed_per_hour      [$hour] += $hgrid_feed;
     $grid_feed [$month][$day][$hour] += $hgrid_feed;
     if (defined $capacity) {
@@ -1588,6 +1603,7 @@ sub simulate_hour {
         $dischg[$month][$day][$hour] += $hdischg_delta;
         $soc   [$month][$day][$hour] += $soc;
     }
+    return $hexcess;
 }
 
 sub simulate()
@@ -1625,6 +1641,7 @@ sub simulate()
     STDOUT->autoflush(1);
     print "$simul_year$en2         :"
         unless $test;
+    my $excess = 0;
     while ($year < $end_year) {
         my $year_str = $tmy ? "TMY" : $start_year + $year;
         my $year_str_TMY = " ".($tmy ? "$TMY" : $year_str);
@@ -1649,11 +1666,17 @@ sub simulate()
                 }
             }
 
-            simulate_hour($year_str, $year, $month, $day, $hour,
-                          $gross_power, $pvnet_power, $pvnet_direct);
+            $excess += simulate_hour($year_str, $year, $month, $day, $hour,
+                                     $gross_power, $pvnet_power, $pvnet_direct);
         }
-
-        $hour = 0 if ++$hour == 24;
+        if (++$hour == 24) {
+            if ($PV_excess_max < $excess) {
+                $PV_excess_max = $excess;
+                $PV_excess_max_time = date_str($year_str, $month, $day);
+            }
+            $excess = 0;
+            $hour = 0;
+        }
         adjust_day_month();
         if ($month > 12) {
             print $year_str_TMY if !$test && !$debug;
@@ -1673,7 +1696,9 @@ sub simulate()
     $PV_use_loss_hours /= ($sel_items / YearHours * $years) if $curb;
     # also undo: factor out $load_scale for optimizing the inner loop
     $PV_use_loss_sum *= $load_scale / $years if $curb;
-    $PV_used_sum *= $load_scale / $years;
+    $PV_used_sum   *= $load_scale / $years;
+    $PV_excess_sum *= $load_scale / $years;
+    $PV_excess_max *= $load_scale;
     $grid_feed_sum *= $load_scale / $years;
     # $sum_needed = rls($sum_needed);
     # die "Internal error: load sum = $load_sum vs. needed = $sum_needed"
@@ -1762,6 +1787,8 @@ my $by_txt           = $en ? "by"                   : "durch";
 my $by_curb = "$by_txt $curb_txt";
 my $with             = $en ? "with"                 : "mit";
 my $without          = $en ? "without"              : "ohne";
+my $PV_excess_txt    = $en ? "PV excess"            : "PV-Überschuss";
+my $Max_txt          = $en ? "max"                  : "Max.";
 my $grid_feed_txt    = $en ? "grid feed-in"         : "Netzeinspeisung";
 my $dis_feed_txt     =
     $grid_feed_txt   .($en ? " via storage"         : " via Speicher");
@@ -1875,21 +1902,23 @@ sub save_statistics {
     print $OU "$m_txt in W $load_min_time,";
     print $OU "$M_txt in W $load_max_time,";
     print $OU "$pv_data_txt$plural_txt".($tmy ? " $during_txt $TMY" : "").
-        "$only_during\n";
+        "$only_during,$pvsys_eff_txt,$ieff_txt\n";
     print $OU round_1000($sel_load_sum).",$load_profile,"
         .rls($night_avg_load).",";
     print $OU "$load_const," if defined $load_const;
-    print $OU "$base_load,$load_max,".join(",", @PV_files)."\n";
+    print $OU "$base_load,$load_max,".join(",", @PV_files).","
+        .round_percent($pvsys_eff).",$inverter_eff\n";
 
     print $OU "$nominal_power_txt in Wp,$limit_txt in W $none0_txt,"
         ."$gross_max_txt in W $PV_gross_max_time,"
         ."$net_max_txt in W $PV_net_max_time,"
-        ."$curb_txt in W,$pvsys_eff_txt,$PV_DC_txt,$ieff_txt,"
+        ."$curb_txt in W,$PV_DC_txt,"
+        ."$Max_txt $PV_excess_txt in Wh $PV_excess_max_time,"
         ."$own_ratio_txt $of_yield,$load_cover_txt $of_consumption,";
     print $OU ",$D_txt:,".join(",", @load_dist) if defined $load_dist;
     print $OU "\n$nominal_sum,$limits_sum,".round($PV_gross_max).","
         .round($PV_net_max).",".($curb ? $curb : $en ? "none" : "keine").","
-        .round_percent($pvsys_eff).",".round_1000($PV_DC_sum).",$inverter_eff,"
+        .round_1000($PV_DC_sum).",".round($PV_excess_max).","
         ."$own_ratio,$load_cover,";
     print $OU ",$d_txt:,".join(",", @load_factors) if defined $load_factors;
     print $OU "\n";
@@ -1942,7 +1971,7 @@ sub save_statistics {
     print $OU "$values_txt$only_during,$PV_gross_txt,"
         .($curb ? "$PV_loss_txt $by_curb," : "")."$PV_net_txt,"
         .($curb ? "$usage_loss_txt $net_appr $by_curb,": "")
-        ."$own_txt,$grid_feed_txt,$consumpt_txt"
+        ."$own_txt,$PV_excess_txt,$grid_feed_txt,$consumpt_txt"
         .(defined $capacity ? ",$charge_txt,$dischg_after_txt" : "")
         ."\n";
     print $OU "$sum_avg,".
@@ -1950,7 +1979,7 @@ sub save_statistics {
         ($curb ? round_1000($PV_losses  )."," : "").
         round_1000($PV_net_sum).",".
         ($curb ? round_1000($PV_use_loss_sum)."," : "").
-        round_1000($PV_used_sum).",".
+        round_1000($PV_used_sum).",".round_1000($PV_excess_sum).",".
         round_1000($grid_feed_sum ).",".round_1000($sel_load_sum).",".
         (defined $capacity ?
          round_1000(   $charge_sum).",".round_1000($dischg_sum)."," : "").
@@ -1960,13 +1989,13 @@ sub save_statistics {
     my $j = $i - 1 + ($max ? $sel_items
                       : $hourly ? $sel_hours
                       : $daily ? 365 : $weekly ? 52 : $monthly ? 12 : 4);
-    my ($I, $J) = $curb ? ("I", "J", "K") : ("G", "H", "I");
+    my ($I, $J) = $curb ? ("J", "K", "L") : ("H", "I", "J");
     print $OU "$type,$PV_gross_txt,"
         ."$PV_net_txt".($curb ? " $without $curb_txt" : "").","
         .($curb ?       "$PV_net_txt $with $curb_txt,": "")
         .($curb ? "$own_txt $without $curb_txt," : "")
         ."$own_txt".($curb ? " $with $curb_txt"  : "").","
-        ."$grid_feed_txt,$consumpt_txt"
+        ."$PV_excess_txt,$grid_feed_txt,$consumpt_txt"
         .(defined $capacity ? ",$charge_txt,$dischg_after_txt,$soc_txt" : "")
         ."\n";
     sub SUM { my ($I, $i, $j) = @_;
@@ -1974,14 +2003,16 @@ sub save_statistics {
     }
     print $OU "$sum_avg,".SUM("B", $i, $j).",".SUM("C", $i, $j)
         .",".SUM("D", $i, $j).",".SUM("E", $i, $j).",".SUM("F", $i, $j)
-        .($curb ? ",".SUM("G", $i, $j).",".SUM("H", $i, $j) : "")
+        .",".SUM("G", $i, $j)
+        .($curb ? ",".SUM("H", $i, $j).",".SUM("I", $i, $j) : "")
         .(defined $capacity ? ",".SUM($I, $i, $j).",".SUM($J, $i, $j) : "")
         .",,$each in ".($max ? "m" : "")."Wh\n";
 
     (my $week, my $days, $hour) = (1, 0, 0);
     ($month, $day) = $season && !$test ? (2, 5) : (1, 1);
     my ($g0, $gross, $p0, $ploss, $n0, $net) = (0, 0, 0, 0, 0, 0);
-    my ($h0, $hload, $l0,  $loss, $u0, $used, $f0, $feed) = (0,0,0,0,0,0,0,0);
+    my ($h0, $hload, $l0,  $loss, $u0, $used) = (0, 0, 0, 0, 0, 0);
+    my ($e0, $exc, $f0, $feed) = (0, 0, 0, 0);
     my ($c0, $chg  , $d0,   $dis, $soc) = (0, 0, 0, 0) if defined $capacity;
     while ($days < 365) {
         my $sel = selected($month, $day, $hour);
@@ -2012,6 +2043,7 @@ sub save_statistics {
                 $hload   +=        $load[$month][$day][$hour];
                 $loss    += $PV_use_loss[$month][$day][$hour] if $PV_loss != 0;
                 $used    += $PV_used    [$month][$day][$hour];
+                $exc     += $PV_excess  [$month][$day][$hour];
                 $feed    += $grid_feed  [$month][$day][$hour];
                 if (defined $capacity) {
                     $chg += $charge     [$month][$day][$hour];
@@ -2051,6 +2083,7 @@ sub save_statistics {
                     $loss = $PV_loss == 0 ? 0 :
                             $PV_use_loss_by_item[$mon_][$day_][$hour_][$i];
                     $used =     $PV_used_by_item[$mon_][$day_][$hour_][$i];
+                    $exc  =   $PV_excess_by_item[$mon_][$day_][$hour_][$i];
                     $feed =   $grid_feed_by_item[$mon_][$day_][$hour_][$i];
                     if (defined $capacity) {
                         $chg =   $charge_by_item[$mon_][$day_][$hour_][$i];
@@ -2063,6 +2096,7 @@ sub save_statistics {
                 $n0 += (my $n = $fact   *  $net);
                 $l0 += (my $l = $fact_s * ($used + $loss)) if $curb;
                 $u0 += (my $u = $fact_s *  $used);
+                $e0 += (my $e = $fact_s *  $exc );
                 $f0 += (my $f = $fact_s *  $feed);
                 $h0 += (my $h = $fact_s *  $hload * $years);
                 $c0 += (my $c = $fact_s * $chg) if defined $capacity;
@@ -2071,11 +2105,11 @@ sub save_statistics {
                     .($curb ? round($p)."," : "")
                     .round($n).", "
                     .($curb ? round($l)."," : "")
-                    .round($u).",".round($f).",".round($h)
+                    .round($u).",".round($e).",".round($f).",".round($h)
                     .(defined $capacity ? ",".round($c).",".round($d).
                                           ",".round($fact_s * $soc) : "")."\n";
             }
-            ($gross, $ploss, $net)        = (0, 0, 0),
+            ($gross, $ploss, $net, $exc ) = (0, 0, 0, 0),
             ($hload, $loss, $used, $feed) = (0, 0, 0, 0);
             ($chg, $dis)                  = (0, 0) if defined $capacity;
         }
@@ -2094,6 +2128,7 @@ sub save_statistics {
     check_consistent($usage_loss_txt, $PV_use_loss_sum , $l0-$u0, $max) if $curb;
     check_consistent($consumpt_txt  , $sel_load_sum    , $h0, $max);
     check_consistent($own_txt       , $PV_used_sum     , $u0, $max);
+    check_consistent($PV_excess_txt , $PV_excess_sum   , $e0, $max);
     check_consistent($grid_feed_txt , $grid_feed_sum   , $f0, $max);
     check_consistent($charge_txt, $charge_sum, $c0, $max) if defined $capacity;
     check_consistent($dischg_txt, $dischg_sum, $d0, $max) if defined $capacity;
@@ -2212,6 +2247,9 @@ print "$own_txt $en4 $en3         =" .kWh($PV_used_sum)."\n";
 print "$usage_loss_txt $en3$en3  =" .kWh($PV_use_loss_sum)
     ." $net_appr $during_txt ".round($PV_use_loss_hours)
     ." h $by_curb_at $curb W\n" if $curb;
+print "$PV_excess_txt $en4              =" .kWh($PV_excess_sum)."\n";
+print "$Max_txt $PV_excess_txt $en5         =" .kWh($PV_excess_max)
+    ." $PV_excess_max_time\n";
 print "$grid_feed_txt $en3            =" .kWh($grid_feed_sum)."\n";
 print_arr_day(     "$F_txt = ", \@grid_feed_per_hour) if $verbose;
 print_arr_day( "$F_max_txt = ", \@grid_feed_max_hour) if $verbose;

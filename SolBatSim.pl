@@ -1982,14 +1982,14 @@ sub save_statistics {
         round_1000($PV_used_sum).",".round_1000($PV_excess_sum).",".
         round_1000($grid_feed_sum ).",".round_1000($sel_load_sum).",".
         (defined $capacity ?
-         round_1000(   $charge_sum).",".round_1000($dischg_sum)."," : "").
-        ",$each in kWh\n";
+         round_1000(   $charge_sum).",".round_1000($dischg_sum).",," : "").
+        "$each in kWh\n";
 
     my $i = 21 + (defined $capacity ? 6 : 0);
     my $j = $i - 1 + ($max ? $sel_items
                       : $hourly ? $sel_hours
                       : $daily ? 365 : $weekly ? 52 : $monthly ? 12 : 4);
-    my ($I, $J) = $curb ? ("J", "K", "L") : ("H", "I", "J");
+    my ($I, $J) = $curb ? ("J", "K") : ("H", "I");
     print $OU "$type,$PV_gross_txt,"
         ."$PV_net_txt".($curb ? " $without $curb_txt" : "").","
         .($curb ?       "$PV_net_txt $with $curb_txt,": "")
@@ -2005,8 +2005,8 @@ sub save_statistics {
         .",".SUM("D", $i, $j).",".SUM("E", $i, $j).",".SUM("F", $i, $j)
         .",".SUM("G", $i, $j)
         .($curb ? ",".SUM("H", $i, $j).",".SUM("I", $i, $j) : "")
-        .(defined $capacity ? ",".SUM($I, $i, $j).",".SUM($J, $i, $j) : "")
-        .",,$each in ".($max ? "m" : "")."Wh\n";
+        .(defined $capacity ? ",".SUM($I, $i, $j).",".SUM($J, $i, $j)."," : "")
+        .",$each in ".($max ? "m" : "")."Wh\n";
 
     (my $week, my $days, $hour) = (1, 0, 0);
     ($month, $day) = $season && !$test ? (2, 5) : (1, 1);
@@ -2048,7 +2048,7 @@ sub save_statistics {
                 if (defined $capacity) {
                     $chg += $charge     [$month][$day][$hour];
                     $dis += $dischg     [$month][$day][$hour];
-                    $soc += $soc        [$month][$day][$hour];
+                    $soc  = $soc        [$month][$day][$hour];
                 }
             }
         }

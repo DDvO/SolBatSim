@@ -397,6 +397,10 @@ die "Missing load profile file name - should be first CLI argument"
     unless defined $load_profile;
 @load_dist    = array_arg("dist", $load_dist   , 0, 23, 100);
 @load_factors = array_arg("bend", $load_factors, 0, 23, 1);
+for (my $i = 0; $i < 24; $i++) {
+    $load_factors[$i] *= 100; # for printing them as percent values
+}
+
 if (defined $load_dist) {
     for (my $i = 0; $i < 24; $i++) {
         $load_dist_sum += $load_dist[$i];
@@ -422,7 +426,7 @@ if (defined $capacity) {
     die "-feed excl requires -dc option"
         if defined $max_feed && $excl_feed && $AC_coupled;
 } else {
-    die   "-ac option requires -capacity option" if $AC_coupled >= 0;
+    die   "-ac or -dc option requires -capacity option" if $AC_coupled >= 0;
     die "-pass option requires -capacity option" if defined $bypass;
     die "-feed option requires -capacity option" if defined $max_feed;
     die "-ceff option requires -capacity option" if defined $charge_eff;
@@ -699,7 +703,7 @@ sub get_profile {
                 }
                 my $orig_hload = $hload;
                 my $ref_hload =
-                    $load[$month][$day][$hour] = $load_factors[$hour] *
+                    $load[$month][$day][$hour] = $load_factors[$hour] / 100 *
                     (!defined $load_dist ? $hload :
                      $load_dist[$hour] * $day_load / $load_dist_sum);
                 my $items = $items_by_hour[$month][$day][$hour];
@@ -709,7 +713,7 @@ sub get_profile {
                     my $load = $load_const;
                     if (!$load_const_sel || $load_min) {
                         $load = $load_item[$month][$day][$hour][$item]
-                            * $load_factors[$hour];
+                            * $load_factors[$hour] / 100;
                         $load *= $ref_hload / $orig_hload
                             if defined $load_dist && $orig_hload != 0;
                         $load = $load_const if (!$test || $hour >= TEST_START)

@@ -519,6 +519,8 @@ sub selected { my ($m, $d, $h) = @_;
 # all hours according to local time without switching to daylight saving time
 use constant NIGHT_START =>  0; # at night (with just base load)
 use constant NIGHT_END   =>  6;
+use constant BRIGHT_START =>  8; # daily period of possibly bright sunshine
+use constant BRIGHT_END   => 16;
 
 my $sum_items = 0;
 my ($sel_items, $sel_hours) = 0; # items/hours a year selected by -only
@@ -527,6 +529,7 @@ my $load_min_time = $no_time_txt;
 my $load_max      = 0;
 my $load_max_time = $no_time_txt;
 my $night_sum = 0;
+my $bright_sum = 0;
 my ($load_sum, $sel_load_sum) = (0, 0);
 
 my ($month, $day, $hour) = (1, 1, 0);
@@ -742,6 +745,8 @@ sub get_profile {
                 $hload = 0 unless $sel;
                 $night_sum += $hload
                     if NIGHT_START <= $hour && $hour < NIGHT_END;
+                $bright_sum += $hload
+                    if BRIGHT_START <= $hour && $hour < BRIGHT_END;
                 $load_by_hour   [$hour   ] += $hload;
                 $load_by_weekday[$weekday] += $hload;
                 $load_by_month  [$month  ] += $hload;
@@ -817,6 +822,7 @@ my $per3  = $en ? "per 3 hours"                 : "pro 3 Stunden";
 my $per_m = $en ? "per month"                   : "pro Monat";
 my $W_txt = $en ? "portion per weekday (Mo-Su)" :"Anteil pro Wochentag (Mo-So)";
 my $b_txt = $en ? "nightly load on average"     :"Nächtliche Durchschnittslast";
+my $B_txt = $en ? "daytime load on average"     :"Tagsüber Durchschnittslast";
 my $m_txt = $en ? "min load (base load)"        : "Minimallast (Grundlast)";
 my $M_txt = $en ? "max load"                    : "Maximallast";
 my $en1 = $en ? " "   : "";
@@ -852,8 +858,12 @@ if ($verbose) {
 }
 my $night_avg_load = $night_sum * $sn;
 $night_avg_load /= (NIGHT_END - NIGHT_START) if $hours_a_day == 24;
+my $bright_avg_load = $bright_sum * $sn;
+$bright_avg_load /= (BRIGHT_END - BRIGHT_START) if $hours_a_day == 24;
 print "$b_txt$en5=".W(rls($night_avg_load)).
     from_to_hours_str(NIGHT_START, NIGHT_END)."\n";
+print "$B_txt$en3  =".W(rls($bright_avg_load)).
+    from_to_hours_str(BRIGHT_START, BRIGHT_END)."\n";
 print "$m_txt $en3    =".(defined $base_load ? W($base_load) : " $none_txt")
                                                           ." $load_min_time\n";
 print          "$M_txt $en3                =".W($load_max)." $load_max_time\n";
@@ -1902,13 +1912,14 @@ sub save_statistics {
     my $limits_sum  = $#PV_limit == 0 ? $PV_limit[0] : "$PV_limit";
     print $OU "$consumpt_txt$timeframe in kWh,$profile_txt,";
     print $OU "$b_txt in W".from_to_hours_str(NIGHT_START, NIGHT_END).",";
+    print $OU "$B_txt in W".from_to_hours_str(BRIGHT_START, BRIGHT_END).",";
     print $OU "$load_adapted_txt in W$load_during_txt," if defined $load_const;
     print $OU "$m_txt in W $load_min_time,";
     print $OU "$M_txt in W $load_max_time,";
     print $OU "$pv_data_txt$plural_txt".($tmy ? " $during_txt $TMY" : "").
         "$only_during,$pvsys_eff_txt,$ieff_txt\n";
     print $OU round_1000($sel_load_sum).",$load_profile,"
-        .rls($night_avg_load).",";
+        .rls($night_avg_load).",".rls($bright_avg_load).",";
     print $OU "$load_const," if defined $load_const;
     print $OU "$base_load,$load_max,".join(",", @PV_files).","
         .round_percent($pvsys_eff).",$inverter_eff\n";

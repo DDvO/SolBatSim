@@ -155,7 +155,7 @@ use constant TimeZone => 1; # CET/MEZ
 my @PV_files;         # PV data input file(s), one per string
 my @PV_direct;        # with storage, bypass it for respective PV output string
 my @PV_nomin;         # nominal PV output(s), default from PV data file(s)
-my @PV_limit;         # power limit at inverter input, default 0 (none)
+my @PV_limit;         # power limit at inverter input, default '*' (none)
 my ($lat, $lon);      # optional, from PV data file(s)
 my $pvsys_eff;        # PV system efficiency, default from PV data file(s)
 my $inverter_eff;     # PV inverter efficiency; default see below
@@ -183,7 +183,7 @@ while ($#ARGV >= 0 && $ARGV[0] =~ m/^\s*[^-]/) {
     push @PV_files, shift @ARGV; # PV data file
     push @PV_direct,$#ARGV >= 0 && $ARGV[0] =~ m/^direct$/  ? shift @ARGV : 0;
     push @PV_nomin, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : undef;
-    push @PV_limit, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : 0;
+    push @PV_limit, $#ARGV >= 0 && $ARGV[0] =~ m/^[\d\.]+$/ ? shift @ARGV : '*';
 }
 
 sub no_arg {
@@ -315,7 +315,7 @@ use constant TEST_DROP_END   => TEST_DROP_START + TEST_DROP_LEN;
 use constant TEST_PV_START   =>  7; # start hour of PV yield
 use constant TEST_PV_END     => 17; # end   hour of PV yield
 use constant TEST_PV_NOMIN   => 1100; # in Wp
-use constant TEST_PV_LIMIT   =>    0; # in W
+use constant TEST_PV_LIMIT   =>  '*'; # in W
 use constant TEST_LOAD       =>  900; # in W
 use constant TEST_LOAD_LEN   =>
     TEST_END > TEST_DROP_END ? TEST_LENGTH - TEST_DROP_LEN
@@ -792,7 +792,7 @@ my $pv_data_txt = $en ? "PV data file"          : "PV-Daten-Datei";
 my $plural_txt  = $en ? "(s)"                   : "(en)";
 my $direct_txt  = $en ? "direct"                : "direkt";
 my $limit_txt   = $en ? "inverter input limit"  : "WR-Eingangs-Begrenzung";
-my $none0_txt   = $en ? "(0 means none)"        : "(0 bedeutet keine)";
+my $none0_txt   = $en ? "('*' means none)"      : "('*' bedeutet keine)";
 my $slope_txt   = $en ? "slope"                 : "Neigungswinkel";
 my $azimuth_txt = $en ? "azimuth"               : "Azimut";
 my $yearly_txt  = $en ? "over a year"           : "über ein Jahr";
@@ -894,7 +894,6 @@ my @PV_net_across; # sum over years, only where selected
 my ($start_year, $years);
 my $garbled_hours = 0;
 sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
-    $limit *= $inverter_eff; # limit at inverter input converted to net output
     open(my $IN, '<', $file) or die "Could not open PV data file $file: $!\n"
         unless $test;
     print "$pv_data_txt $en2$s13: $file" unless $test;
@@ -1039,7 +1038,7 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
             (defined $sys_eff_deflt ? 1 / $sys_eff_deflt : $gross_rate);
         $PV_gross[$year][$month][$day][$hour] += $gross_power;
         $net_power = $gross_power * $net_rate;
-        $net_power = $limit if $limit != 0 && $net_power > $limit;
+        $net_power = min($net_power, $limit * $inverter_eff) if $limit ne '*';
         # TODO adapt loss calcuation (so far only on curb) accordingly
         $PV_net       [$year][$month][$day][$hour] += $net_power;
         $PV_net_direct[$year][$month][$day][$hour] += $direct ? $net_power : 0;
@@ -1072,11 +1071,13 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
     return $nominal_power;
 }
 
-my $total_limit = 0;
+my ($total_nomin, $total_limit) = (0, 0);
 for (my $i = 0; $i <= $#PV_files; $i++) {
-    $total_limit += $PV_limit[$i];
-    $PV_nomin[$i] = ($PV_direct[$i] ? "$direct_txt:" : "").
+    my $nomin =
         get_power($PV_files[$i], $PV_nomin[$i], $PV_limit[$i], $PV_direct[$i]);
+    $total_nomin += $nomin;
+    $total_limit += $PV_limit[$i] ne '*' ? $PV_limit[$i] : $nomin;
+    $PV_nomin[$i] = ($PV_direct[$i] ? "$direct_txt:" : "").$nomin;
 }
 my $PV_nomin = join("+", @PV_nomin);
 my $PV_limit = join("+", @PV_limit);
@@ -2185,7 +2186,7 @@ my $by_curb_at     = $en ? "$by_curb at"          : "$by_curb auf";
 my $yield_portion  = $en ? "yield portion"        : "Ertragsanteil";
 # PV-Abregelungsverlust"
 my $nominal_sum = $#PV_nomin == 0 ? "" : " = $PV_nomin Wp";
-my $limits_sum = $total_limit == 0 ? "" :
+my $limits_sum = $total_limit == $total_nomin ? "" :
     ", $limit_txt: ".$PV_limit." W".($#PV_limit == 0 ? "" : " $none0_txt");
 
 print "$energy_txt $on_average_txt\n" if $years > 1;

@@ -25,8 +25,8 @@
 #          <bis Uhrzeit, sonst 24 Uhr, auch über Mitternacht>]]
 #   [-max_charge <Ladehöhe in %, sonst 90> [<max Laderate, sonst 1 C>]]
 #   [-max_discharge <Entladetiefe in %, sonst 90> [<Rate, sonst 1 C>]]
-#   [-ceff <Lade-Wirkungsgrad in %, ansonsten 94>]
-#   [-seff <Speicher-Wirkungsgrad in %, ansonsten 95>]
+#   [-ceff <Lade-Wirkungsgrad in %, ansonsten 90 für AC-gekoppelt, sonst 99>]
+#   [-seff <Speicher-Wirkungsgrad in %, ansonsten 99>]
 #   [-ieff <Wechselrichter-Wirkungsgrad in %, ansonsten 94>]
 #   [-ieff2 <Wirkungsgrad des Entlade-Wechselrichters in %, Standard von -ieff>]
 #   [-debug] [-test <Lastpunkte pro Stunde, für Prüfberechnung über 24 Stunden>]
@@ -85,8 +85,8 @@
 #         [<from hour, default 0>..<to hour, default 24, also over midnight>]]
 #   [-max_charge <SoC in %, default 90> [<max charge rate, default 1 C>]]
 #   [-max_discharge <DoD in %, default 90> [<max rate, default 1 C>]]
-#   [-ceff <charging efficiency in %, default 94>]
-#   [-seff <storage efficiency in %, default 95>]
+#   [-ceff <charging efficiency in %, default 90 for AC-coupled, otherwise 99>]
+#   [-seff <storage efficiency in %, default 99>]
 #   [-ieff <inverter efficiency in %, default 94>]
 #   [-ieff2 <efficiency of discharge inverter in %, default from -ieff>]
 #   [-debug] [-test <load points per hour, for using test data over 24 hours>]
@@ -414,8 +414,8 @@ if (defined $load_const) {
 }
 $inverter_eff = 0.94    unless defined $inverter_eff;
 if (defined $capacity) {
-    $charge_eff  = 0.94 unless defined $charge_eff;
-    $storage_eff = 0.95 unless defined $storage_eff;
+    $charge_eff  = $AC_coupled ? 0.9 : 0.99 unless defined $charge_eff;
+    $storage_eff = 0.99 unless defined $storage_eff;
     $inverter2_eff = $inverter_eff unless defined $inverter2_eff;
     die "Begin hour for -feed option must be in range 0..24"
         if  $feed_from > 24;

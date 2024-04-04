@@ -310,8 +310,8 @@ SolBatSim.pl <load profile file> [<consumption per year in kWh>]
         [<from hour, default 0>..<to hour, default 24, also over midnight>]]
   [-max_charge <SoC in %, default 90> [<max charge rate, default 1 C>]]
   [-max_discharge <DoD in %, default 90> [<max rate, default 1 C>]]
-  [-ceff <charging efficiency in %, default 94>]
-  [-seff <storage efficiency in %, default 95>]
+  [-ceff <charging efficiency in %, default 90 for AC-coupled, otherwise 99>]
+  [-seff <storage efficiency in %, default 99>]
   [-ieff <inverter efficiency in %, default 94>]
   [-ieff2 <efficiency of discharge inverter in %, default from -ieff>]
   [-debug] [-test <load points per hour, for using test data over 24 hours>]
@@ -335,7 +335,7 @@ When PV data for more than one year is given, the average is computed, while
 with the option `-tmy` months for a typical meteorological year are selected.
 
 With storage, AC-coupled charging is the default. It has extra inverter loss,
-but no spill loss. DC-coupled charging bypasses first inverter and its limits.
+but no spill loss. With DC coupling, the charging efficiency default is higher.
 
 With each the options `-hour`/`-day`/`-week`/`-month` a CSV file is produced
 with the given name containing with statistical data per hour/day/week/month.
@@ -371,8 +371,8 @@ SolBatSim.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
          <bis Uhrzeit, sonst 24 Uhr, auch über Mitternacht>]]
   [-max_charge <Ladehöhe in %, sonst 90> [<max Laderate, sonst 1 C>]]
   [-max_discharge <Entladetiefe in %, sonst 90> [<Rate, sonst 1 C>]]
-  [-ceff <Lade-Wirkungsgrad in %, ansonsten 94>]
-  [-seff <Speicher-Wirkungsgrad in %, ansonsten 95>]
+  [-ceff <Lade-Wirkungsgrad in %, ansonsten 90 für AC-gekoppelt, sonst 99>]
+  [-seff <Speicher-Wirkungsgrad in %, ansonsten 99>]
   [-ieff <Wechselrichter-Wirkungsgrad in %, ansonsten 94>]
   [-ieff2 <Wirkungsgrad des Entlade-Wechselrichters in %, Standard von -ieff>]
   [-debug] [-test <Lastpunkte pro Stunde, für Prüfberechnung über 24 Stunden>]
@@ -396,7 +396,7 @@ Wenn PV-Daten für mehrere Jahre gegeben sind, wird der Durchschnitt berechnet
 oder mit Option `-tmy` Monate für ein typisches meteorologisches Jahr gewählt.
 
 Beim Speicher ist AC-Kopplung Standard. Dabei Verluste durch zweimal WR, aber
-kein Überlauf. DC-gekoppelte Ladung umgeht den ersten WR und seine Limits.
+kein Überlauf. Bei DC-Kopplung ist der Lade-Wirkungsgrad-Standardwert höher.
 
 Mit den Optionen `-hour`/`-day`/`-week`/`-month` wird jeweils eine CSV-Datei
 mit gegebenen Namen mit Statistik-Daten pro Stunde/Tag/Woche/Monat erzeugt.

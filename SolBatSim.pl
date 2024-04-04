@@ -5,7 +5,7 @@
 # und optional mit Stromspeicher (Batterie o.ä.)
 #
 # Nutzung: SolBatSim.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
-#   (<PV-Datei> [direct] [<Nennleistung Wp> [<WR-Eingangsbegrenzung in W>]])+
+#   (<PV-Datei> [direct] [<Nennleistung Wp> [<DC-Eingangsbegrenzung in W>]])+
 #   [-only <*|Jahr[..Jahr]>[-<*|Mon[..Mon]>[-<*|Tag[..Tag]>[:<*|Std[..Std]]]]]
 #   [-dist <relative Lastverteilung über den Tag pro Stunde 0,..,23>
 #   [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>
@@ -62,11 +62,11 @@
 ################################################################################
 # Simulation of actual own consumption of photovoltaic power output according
 # to load profiles with a resolution of at least one hour, typically per minute.
-# Optionally takes into account input limit and output crop of solar inverter.
+# Optionally takes into account DC input limit and output curb of PV inverter.
 # Optionally with energy storage (using a battery or the like).
 #
 # Usage: SolBatSim.pl <load profile file> [<consumption per year in kWh>]
-#   (<PV file> [direct] [<nominal power in Wp> [<inverter input limit in W]])+
+#   (<PV file> [direct] [<nominal power in Wp> [<DC input limit in W]])+
 #   [-only <*|year[..year]>[-<*|mon[..mon]>[-<*|day[..day]>[:<*|hour[..hour]]]]]
 #   [-dist <relative load distribution over each day, per hour 0,..,23>
 #   [-bend <load distort factors for hour 0,..,23 each day, default 1>
@@ -791,7 +791,7 @@ my $profile_txt = $en ? "load profile file"     : "Lastprofil-Datei";
 my $pv_data_txt = $en ? "PV data file"          : "PV-Daten-Datei";
 my $plural_txt  = $en ? "(s)"                   : "(en)";
 my $direct_txt  = $en ? "direct"                : "direkt";
-my $limit_txt   = $en ? "inverter input limit"  : "WR-Eingangs-Begrenzung";
+my $limit_txt   = $en ? "DC input limit"        : "DC-Eingangs-Begrenzung";
 my $none0_txt   = $en ? "('*' means none)"      : "('*' bedeutet keine)";
 my $slope_txt   = $en ? "slope"                 : "Neigungswinkel";
 my $azimuth_txt = $en ? "azimuth"               : "Azimut";
@@ -1262,10 +1262,10 @@ sub simulate_charge {
 
 sub simulate_item {
     my ($year_str, $month, $day, $hour,
-        $gross_power, $pvnet_power, $pvnet_direct,
+        $DC_power, $pvnet_power, $pvnet_direct,
         $item, $items, $trace, $PV_loss, $PV_loss_capa) = @_;
     my $load = $load_item[$month][$day][$hour][$item];
-    # $gross_power is used only with DC-coupled charging
+    # $DC_power is the input power available for DC-coupled charging
     # $pvnet_{power,direct} and $load are the main input for simulation
     # $PV_loss is upper limit for PV net usage loss computation on $curb
 
@@ -1336,8 +1336,7 @@ sub simulate_item {
     if (defined $capacity) { # storage present
         $PV_loss_curr = $PV_loss_capa if $PV_loss != 0 && $maybe_loss == 0;
         # when charging is DC-coupled, no loss through inverter:
-        my $exc = $gross_power * $pvsys_eff
-            - ($pv_used + $grid_feed_in) / $inverter_eff_never_0;
+        my $exc = $DC_power - ($pv_used+$grid_feed_in) / $inverter_eff_never_0;
 
         ($charge_delta, $pv_used, $grid_feed_in, $maybe_loss, $power_needed,
          my $trace_charge) =
@@ -1480,7 +1479,7 @@ sub simulate_item {
 
 sub simulate_hour {
     my ($year_str, $year, $month, $day, $hour,
-        $gross_power, $pvnet_power, $pvnet_direct) = @_;
+        $gross_power, $DC_power, $pvnet_power, $pvnet_direct) = @_;
 
     my ($hpv_used, $hexcess, $hgrid_feed ) = (0, 0, 0);
     my $hpv_use_loss = 0 if $curb;
@@ -1515,7 +1514,7 @@ sub simulate_hour {
     $PV_net_sum += $pvnet_power;
 
     # factor out $load_scale for optimizing the inner loop
-    $gross_power  /= $load_scale_never_0 if $DC_coupled;
+    $DC_power     /= $load_scale_never_0 if $DC_coupled;
     $pvnet_power  /= $load_scale_never_0;
     $pvnet_direct /= $load_scale_never_0;
     $PV_loss      /= $load_scale_never_0 if $PV_loss != 0; # implies $curb
@@ -1548,7 +1547,7 @@ sub simulate_hour {
     for (my $item = 0; $item < $items; $item++) {
         my ($pvu, $pul, $excess_power, $gfi, $dfi, $chg, $dis, $cpl) =
         simulate_item($year_str, $month, $day, $hour,
-                      $gross_power, $pvnet_power, $pvnet_direct,
+                      $DC_power, $pvnet_power, $pvnet_direct,
                       $item, $items, $trace, $PV_loss, $PV_loss_capa);
         ($hpv_used += $pvu, $hexcess += $excess_power, $hgrid_feed += $gfi);
         $hpv_use_loss += $pul if $curb;
@@ -1690,7 +1689,8 @@ sub simulate()
             }
 
             $excess += simulate_hour($year_str, $year, $month, $day, $hour,
-                                     $gross_power, $pvnet_power, $pvnet_direct);
+                                     $gross_power, $DC_power,
+                                     $pvnet_power, $pvnet_direct);
         }
         if (++$hour == 24) {
             if ($PV_excess_max < $excess) {

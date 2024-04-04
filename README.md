@@ -10,7 +10,7 @@ run on an system supporting Perl. It uses hourly solar yield data in CSV format,
 e.g., from [PVGIS](https://re.jrc.ec.europa.eu/pvg_tools/en/)
 and load profiles with a resolution of at least one hour (better: minute-based).
 It optionally produces statistical data per hour/day/week/month in CSV format.
-It optionally takes into account input limit and output crop of solar inverters.
+It optionally takes into account DC input limits and output curb of PV inverter.
 
 Various efficiency/loss parameters can be set freely, with reasonable defaults.
 Storage may be AC or DC coupled, with adjustable charge/discharge limits.
@@ -233,8 +233,8 @@ und weitere Parameter wie der System-Wirkungsgrad der PV-Anlage
 (resultierend aus Verlusten z.B. in den Leitungen und durch
 Verschmutzung, Eigenverschattung und Alterung der Module)
 und der Wirkungsgrad des Wechselrichters, welche als konstant angenommen werden.
-Auch eine Limitierung der Leistung einzelner Modulstränge (an MPPT-Eingängen)
-und der Wechselrichter-Gesamt-Ausgangsleistung
+Auch eine Begrenzung der Leistung einzelner Modulstränge (an MPPT-Eingängen)
+und Drosselung der Wechselrichter-Gesamt-Ausgangsleistung
 (auf [z.B. 600 W](https://Solar.DavOh.de/#Kappungsverlust)) wird unterstützt.
 
 Außerdem kann die Verwendung eines
@@ -291,7 +291,7 @@ und kann bei Bedarf detaillierte Daten für jeden Simulationsschritt anzeigen.
 
 ```
 SolBatSim.pl <load profile file> [<consumption per year in kWh>]
-  (<PV file> [direct] [<nominal power in Wp> [<inverter input limit in W]])+
+  (<PV file> [direct] [<nominal power in Wp> [<DC input limit in W]])+
   [-only <*|year[..year]>[-<*|mon[..mon]>[-<*|day[..day]>[:<*|hour[..hour]]]]]
   [-dist <relative load distribution over each day, per hour 0,..,23>
   [-bend <load distort factors for hour 0,..,23 each day, default 1>
@@ -351,7 +351,7 @@ Then press the download button marked "csv".
 
 ```
 SolBatSim.pl <Lastprofil-Datei> [<Jahresverbrauch in kWh>]
-  (<PV-Datei> [direct] [<Nennleistung Wp> [<WR-Eingangsbegrenzung in W>]])+
+  (<PV-Datei> [direct] [<Nennleistung Wp> [<DC-Eingangsbegrenzung in W>]])+
   [-only <*|Jahr[..Jahr]>[-<*|Mon[..Mon]>[-<*|Tag[..Tag]>[:<*|Std[..Std]]]]]
   [-dist <relative Lastverteilung über den Tag pro Stunde 0,..,23>
   [-bend <Lastverzerrungsfaktoren tgl. pro Std. 0,..,23, sonst 1>

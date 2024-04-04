@@ -886,9 +886,11 @@ print "\n";
 # read PV production data
 
 my $nominal_power_sum = 0;
+my $DC_input_losses = 0; # due to inverter/charger DC input limits on PV power
 my @PV_gross;
 my @PV_gross_across; # sum over years, only where selected
 my @PV_net;
+my @PV_net_loss;
 my @PV_net_direct;
 my @PV_net_across; # sum over years, only where selected
 my ($start_year, $years);
@@ -907,6 +909,7 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
     my $power_provided = 1;  # PVGIS default: none
     my ($power_rate, $gross_rate, $net_rate);
     my ($months, $hours) = (0, 0);
+    my $net_limit = $limit * $inverter_eff if $limit ne '*';
     while ($_ = !$test ? <$IN>
            : "2000010".(1 + int($hours / 24)).":"
            .sprintf("%02d", $hours % 24)."00, "
@@ -1038,8 +1041,10 @@ sub get_power { my ($file, $nominal_power, $limit, $direct) = @_;
             (defined $sys_eff_deflt ? 1 / $sys_eff_deflt : $gross_rate);
         $PV_gross[$year][$month][$day][$hour] += $gross_power;
         $net_power = $gross_power * $net_rate;
-        $net_power = min($net_power, $limit * $inverter_eff) if $limit ne '*';
-        # TODO adapt loss calcuation (so far only on curb) accordingly
+        if ($limit ne '*' &&  $net_power > $net_limit) {
+            $PV_net_loss[$year][$month][$day][$hour] += $net_power - $net_limit;
+            $net_power = $net_limit;
+        }
         $PV_net       [$year][$month][$day][$hour] += $net_power;
         $PV_net_direct[$year][$month][$day][$hour] += $direct ? $net_power : 0;
 
@@ -1670,10 +1675,13 @@ sub simulate()
             my $gross_power  = $PV_gross       [$year][$month][$day][$hour];
             my $pvnet_power  = $PV_net         [$year][$month][$day][$hour];
             my $pvnet_direct = $PV_net_direct  [$year][$month][$day][$hour];
+            my $DC_loss =      $PV_net_loss    [$year][$month][$day][$hour];
+            $DC_input_losses += $DC_loss if defined $DC_loss;
+            my $DC_power = ($pvnet_power-$pvnet_direct) / $inverter_eff_never_0;
 
             if (!defined $gross_power) {
                 if ($hour == 0 && $garbled_hours) { # likely just garbled hour
-                    $gross_power = $pvnet_power = $pvnet_direct = 0;
+                    $gross_power = $DC_power = $pvnet_power = $pvnet_direct = 0;
                 } else {
                     $en = 1;
                     die "No PV power data ".
@@ -1704,6 +1712,7 @@ sub simulate()
 
     # average sums over $years:
     $PV_gross_sum /= $years;
+    $DC_input_losses /= $years;
     $PV_losses /= $years     if $curb;
     $PV_loss_hours /= $years if $curb;
     $PV_net_sum /= $years;
@@ -1775,6 +1784,7 @@ my $own_ratio_txt    = $own_txt .  ($en ? " ratio"  : "santeil");
 my $own_storage_txt  = $en ?"PV own use via storage":"PV-Nutzung über Speicher";
 my $load_cover_txt   = $en ? "use coverage ratio"   : "Eigendeckungsanteil";
 my $PV_gross_txt     = $en ? "PV gross yield"       : "PV-Bruttoertrag";
+my $DC_limit_loss_txt= $en ? "loss by $limit_txt":"Verlust durch DC-Begrenzung";
 my $PV_DC_txt        = $en ? "PV DC yield"          : "PV-DC-Ertrag";
 my $PV_net_txt       = $en ? "PV net yield"         : "PV-Nettoertrag";
 my $PV_txt   = $DC_coupled ? $PV_DC_txt             : $PV_net_txt;
@@ -1928,14 +1938,14 @@ sub save_statistics {
     print $OU "$nominal_power_txt in Wp,$limit_txt in W $none0_txt,"
         ."$gross_max_txt in W $PV_gross_max_time,"
         ."$net_max_txt in W $PV_net_max_time,"
-        ."$curb_txt in W,$PV_DC_txt,"
+        ."$curb_txt in W,$PV_DC_txt,$DC_limit_loss_txt,"
         ."$Max_txt $PV_excess_txt in Wh $PV_excess_max_time,"
         ."$own_ratio_txt $of_yield,$load_cover_txt $of_consumption,";
     print $OU ",$D_txt:,".join(",", @load_dist) if defined $load_dist;
     print $OU "\n$nominal_sum,$limits_sum,".round($PV_gross_max).","
         .round($PV_net_max).",".($curb ? $curb : $en ? "none" : "keine").","
-        .round_1000($PV_DC_sum).",".round($PV_excess_max).","
-        ."$own_ratio,$load_cover,";
+        .round_1000($PV_DC_sum).",".round_1000($DC_input_losses).","
+        .round($PV_excess_max).","."$own_ratio,$load_cover,";
     print $OU ",$d_txt:,".join(",", @load_factors) if defined $load_factors;
     print $OU "\n";
 
@@ -2151,15 +2161,17 @@ sub save_statistics {
 }
 
 
+my $DC_in_losses = $DC_coupled ? $DC_input_losses / $inverter_eff_never_0 : 0;
 my $grid_feed_sum_alt = $PV_sum - $PV_used_sum;
-$grid_feed_sum_alt -= $coupling_loss + $spill_loss + $charging_loss
-    + $storage_loss + $soc if defined $capacity;
+$grid_feed_sum_alt -= $DC_in_losses + $coupling_loss + $spill_loss
+    + $charging_loss + $storage_loss + $soc if defined $capacity;
 my $discrepancy = $grid_feed_sum - $grid_feed_sum_alt;
 my $cpl_loss2 = round($coupling_loss - $DC_feed_loss) if defined $capacity;
 die "Internal error: overall (loss?) calculation discrepancy $discrepancy: ".
     "grid feed-in $grid_feed_sum vs. $grid_feed_sum_alt =\n".
     "PV ".($DC_coupled ? "DC" : "net")." sum "
     ."$PV_sum - PV used $PV_used_sum".(defined $capacity ?
+        " - DC-coupled input limit loss $DC_in_losses".
         " - DC feed loss $DC_feed_loss - loss by spill $spill_loss".
         " - charging loss $charging_loss - storage loss $storage_loss".
         " - coupling loss by 2nd inverter $cpl_loss2".
@@ -2205,6 +2217,7 @@ if ($verbose) {
 print "$PV_gross_txt $en1            =".kWh($PV_gross_sum)."\n";
 print "$PV_DC_txt $en1               =" .kWh($PV_DC_sum).
     ", $pvsys_eff_txt ".percent($pvsys_eff)."%\n";
+print "$DC_limit_loss_txt$en5 =".kWh($DC_input_losses)."\n" if $total_limit != $total_nomin;
 print "$PV_loss_txt $en2 $en2 $en2  ="       .kWh($PV_losses).
     " $during_txt ".round($PV_loss_hours)." h $by_curb_at $curb W\n" if $curb;
 print "$PV_net_txt $en2             =" .kWh($PV_net_sum).

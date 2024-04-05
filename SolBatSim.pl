@@ -1146,6 +1146,7 @@ my $max_dispower = $max_disrate * $capacity / $storage_eff_never_0
     / $load_scale_never_0 if defined $capacity;
 my @soc               if defined $capacity; # state of charge on avg over years
 my @soc_by_item       if defined $capacity;
+my @soc_max_by_hour   if defined $capacity; # max. SoC, on average over years
 my $soc               if defined $capacity; # state of charge of the battery
 my @charge            if defined $capacity; # charge delta on average over years
 my @charge_by_item    if defined $capacity && $max;
@@ -1544,6 +1545,7 @@ sub simulate_hour {
 
     my $trace = $test ? ($day - 1) * 24 + $hour >= TEST_START : $debug;
     # my $feed_sum = 0 if defined $max_feed_scaled_by_eff;
+    my $soc_max_hour = $soc if defined $capacity;
     for (my $item = 0; $item < $items; $item++) {
         my ($pvu, $pul, $excess_power, $gfi, $dfi, $chg, $dis, $cpl) =
         simulate_item($year_str, $month, $day, $hour,
@@ -1560,6 +1562,7 @@ sub simulate_hour {
             $hdischg_delta += $dis;
             $hcpl_loss += $cpl;
         }
+        $soc_max_hour = max($soc_max_hour, $soc) if defined $capacity;;
     }
     # $spill_loss += ($pvnet_power - $feed_sum / $items) if defined $bypass;
 
@@ -1592,6 +1595,7 @@ sub simulate_hour {
     if (defined $capacity) {
         if ($items != 1) {
             # revert factoring out $items for optimizing the inner loop
+            $soc_max_hour /= $items;
             $capacity /= $items;
             $soc_max /= $items;
             $soc_min /= $items;
@@ -1621,6 +1625,7 @@ sub simulate_hour {
         $charge[$month][$day][$hour] += $hcharge_delta;
         $dischg[$month][$day][$hour] += $hdischg_delta;
         $soc   [$month][$day][$hour] += $soc;
+        $soc_max_by_hour[$month][$day][$hour] += $soc_max_hour; # avg over years
     }
     return $hexcess;
 }
@@ -2022,7 +2027,9 @@ sub save_statistics {
         .($curb ? "$own_txt $without $curb_txt," : "")
         ."$own_txt".($curb ? " $with $curb_txt"  : "").","
         ."$PV_excess_txt,$grid_feed_txt,$consumpt_txt"
-        .(defined $capacity ? ",$charge_txt,$dischg_after_txt,$soc_txt" : "")
+        .(defined $capacity ? ",$charge_txt,$dischg_after_txt,".
+                              ($max ? "" : "max. ").$soc_txt.($max?"" : " in %")
+                            : "")
         ."\n";
     sub SUM { my ($I, $i, $j) = @_;
         return "=ROUND(SUM($I$i:$I$j))";
@@ -2074,7 +2081,8 @@ sub save_statistics {
                 if (defined $capacity) {
                     $chg += $charge     [$month][$day][$hour];
                     $dis += $dischg     [$month][$day][$hour];
-                    $soc  = $soc        [$month][$day][$hour];
+                    $soc  = max($soc,
+                        $soc_max_by_hour[$month][$day][$hour]);
                 }
             }
         }
@@ -2133,11 +2141,13 @@ sub save_statistics {
                     .($curb ? round($l)."," : "")
                     .round($u).",".round($e).",".round($f).",".round($h)
                     .(defined $capacity ? ",".round($c).",".round($d).
-                                          ",".round($fact_s * $soc) : "")."\n";
+                                          ",".round($fact_s * $soc * ($max ? 1
+                                                    : 1 / $capacity * 100))
+                                        : "")."\n";
             }
             ($gross, $ploss, $net, $exc ) = (0, 0, 0, 0),
             ($hload, $loss, $used, $feed) = (0, 0, 0, 0);
-            ($chg, $dis)                  = (0, 0) if defined $capacity;
+            ($chg, $dis, $soc)            = (0, 0, 0) if defined $capacity;
         }
         ($month, $day) = (1, 1) if $month > 12;
         last if $test && $days * 24 + $hour == TEST_END;

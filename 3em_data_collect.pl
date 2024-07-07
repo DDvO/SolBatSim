@@ -240,14 +240,33 @@ sub log_name { return out_name($out_log, $_[0], ".txt"); }
 $log = log_name($start->strftime("%Y"));
 open($LOG,'>>', $log) || die "cannot open '$log' for appending: $!";
 
+my $same_warn = 0;
 sub log_msg {
+    my $msg = $_[0];
+    unless ($msg =~ /^WARNING: /) {
+        log_msg("WARNING: last warning occurred $same_warn more times")
+            if $same_warn;
+        $same_warn = 0;
+    }
     my $tim = $addr eq "-" && defined $times[$item] ? $times[$item]
         : "$date $time";
-    my $msg = "$tim: $_[0]\n";
+    my $msg = "$tim: $msg\n";
     print $msg;
     print $LOG $msg if defined $LOG;
 }
-sub log_warn { log_msg("WARNING: $_[0]"); }
+my $last_warn = "";
+sub log_warn { my ($main, $extra) = @_;
+    $extra = "" unless defined $extra;
+    if ($main eq $last_warn) {
+        $same_warn++;
+    } else {
+        log_msg("WARNING: last warning occurred $same_warn more times")
+            if $same_warn;
+        log_msg("WARNING: $main$extra");
+        $last_warn = $main;
+        $same_warn = 0;
+    }
+}
 
 sub do_after_day {
     close $LS if defined $LS;
@@ -344,10 +363,10 @@ sub get_3em {
     unless ($status_json =~ /"time":"([\d:]*)","unixtime":(\d+),"serial":(\d+),.*"emeters":\[\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)}\,\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\},\{"power":([\-\d\.]+),"pf":([\-\d\.]+),"current":([\-\d\.]+),"voltage":([\-\d\.]+),"is_valid":true,"total":([\d\.]+),"total_returned":([\d\.]+)\}\],"total_power":([\-\d\.]+),.*,"uptime":(\d+)/) {
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved
-            log_warn("skipping error response: $1 for 3EM"); # e.g., by Squid
+            log_warn("skipping error response by 3EM: $1"); # e.g., by Squid
         } else {
             my $shown = substr($status_json, 0, 1100); # typically ~1020 chars
-            log_warn("error parsing 3EM status response '$shown'");
+            log_warn("error parsing 3EM status response: $shown");
         }
         sleep(1);
         goto retry;
@@ -374,13 +393,14 @@ sub get_3em {
     if ($unixtime) {
         $last_valid_unixtime = $unixtime;
     } elsif ($last_valid_unixtime) {
-        log_warn("approximating missing 3EM status unixtime from last valid"
-                 ." one $last_valid_unixtime + uptime $uptime");
+        log_warn("approximating missing 3EM status unixtime from last valid one:",
+                 " $last_valid_unixtime + uptime $uptime");
         $unixtime = $last_valid_unixtime + $uptime;
     } else {
         $unixtime = time();
         unless ($unixtime) {
-            log_warn("missing 3EM status unixtime and system time, discarding '$status_json'");
+            log_warn("missing 3EM status unixtime and system time,",
+                     " discarding '$status_json'");
             sleep(1);
             goto retry;
         }
@@ -392,11 +412,10 @@ sub get_3em {
         my $time_hour = substr($time, 0, 5);
         log_warn("3EM status time '$hour' does not equal '$time_hour'")
             unless $hour eq $time_hour;
-        log_warn("3EM status unixtime '$date_3em"."$date_time_sep$time_3em'".
-                 " does not very closely match ".
-                 "host system time '$date"."$date_time_sep$time'")
-            unless abs($unixtime - time()) <= 1
-            # 3 seconds diff can happen easily
+        my $d = $unixtime - time();
+        log_warn("3EM status unixtime deviates from host system time by $d seconds",
+                 ": $date_3em$date_time_sep$time_3em vs. $date$date_time_sep$time")
+            unless abs($d) <= 1 # 3 seconds diff can happen easily
     }
     my $power = $powerA + $powerB + $powerC;
     # may include PV power, charge, and discharge
@@ -433,10 +452,10 @@ sub get_1pm {
     unless ($status_json =~ /"switch:0":\{"id":0, "source":"\w+", "output":\w+, "apower":([\-\d\.]+), "voltage":([\-\d\.]+), "current":([\-\d\.]+), "aenergy":\{"total":([\-\d\.]+),"by_minute":\[([\-\d\.]+),([\-\d\.]+),([\-\d\.]+)\],"minute_ts":(\d+)\},"temperature":\{"tC":([\-\d\.]+), "tF":([\-\d\.]+)\}\}/) {
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved
-            log_warn("skipping error response: $1 for $name"); # e.g., by Squid
+            log_warn("skipping error response by $name: $1"); # e.g., by Squid
         } else {
             my $shown = substr($status_json, 0, 800); # typically ~710 chars
-            log_warn("error parsing $name status response '$shown'");
+            log_warn("error parsing $name status response: $shown");
         }
         goto end;
     }
@@ -446,10 +465,11 @@ sub get_1pm {
     if ($ts) {
         $unixtime = $ts;
     } elsif ($timestamp) {
-        log_warn("substituting missing $name status minute_ts from 3EM timestamp $timestamp");
+        log_warn("substituting missing $name status minute_ts from 3EM timestamp",
+                 " $timestamp");
         $unixtime = $timestamp;
     } else {
-        log_warn("missing $name status minute_ts, discarding '$status_json'");
+        log_warn("missing $name status minute_ts, discarding", " '$status_json'");
         goto end;
     }
     $current = "0    " if abs($current) < 0.0005;
@@ -464,9 +484,10 @@ sub get_1pm {
 
     my $date_time_1pm = $date_1pm.$date_time_sep.$time_1pm;
     my $date_time_3em = $date    .$date_time_sep.$time;
-    log_warn("$name status minute_ts '$date_time_1pm' ".
-             "does not very closely match 3EM timestamp '$date_time_3em'")
-        unless abs($unixtime - $timestamp) <= 3  # 3 seconds diff can happen easily
+    my $d = $unixtime - $timestamp;
+    log_warn("$name status minute_ts deviates from 3EM timestamp by $d seconds",
+             ": $date_time_1pm vs. $date_time_3em")
+        unless abs($d) <= 3  # 3 seconds diff can happen easily
         || ($date_time_1pm eq ($date_time_3em =~ s/:\d\d$/:00/r));
   end:
     return ($unixtime, $power, $data);
@@ -490,10 +511,10 @@ sub get_dtu {
     # \],"total":\{"Power":\{"v":[\-\d\.]+,"u":"W","d":\d\},"YieldDay":\{"v":[\-\d\.]+,"u":"Wh","d":\d+\},"YieldTotal":\{"v":[\-\d\.]+,"u":"kWh","d":\d+\}\},"hints":\{"time_sync":\w+,"radio_problem":\w+,"default_password":\w+\}\}
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved
-            log_warn("skipping error response: $1 for $name"); # e.g., by Squid
+            log_warn("skipping error response by $name: $1"); # e.g., by Squid
         } else {
             my $shown = substr($status_json, 0, 1800); # may be ~1750 chars
-            log_warn("error parsing $name status response '$shown'");
+            log_warn("error parsing $name status response: $shown");
         }
         $timestamp = 0;
         goto end;
@@ -562,8 +583,9 @@ sub try_recover {
         $prev_timestamp = $dt->epoch + $n;
         my $time_diff_now = time() - $prev_timestamp;
         if ($time_diff_now < 0) {
-            log_warn("last timestamp in high-resolution load file '$load_sec' ".
-                     "is $time_diff_now seconds in the future, so $cannot_recover");
+            log_warn("last timestamp in high-resolution load file '$load_sec' is "
+                     .(-$time_diff_now).
+                     " seconds in the future, so $cannot_recover");
             $prev_timestamp = 0;
             return;
         }
@@ -768,7 +790,7 @@ sub do_each_second {
         $prev_pv_power = $pv_power;
     } else {
         my $issue = "PV power is negative";
-        log_warn("$issue: $pv_power; ".
+        log_warn("$issue", ": $pv_power; ".
                  "substituting for energy the previous value $prev_pv_power");
         $warn .= ";$issue";
         $pv_power = $prev_pv_power;
@@ -778,7 +800,7 @@ sub do_each_second {
         $prev_chg_power = $chg_power;
     } else {
         my $issue = "charge power is negative";
-        log_warn("$issue: $chg_power; ".
+        log_warn("$issue", ": $chg_power; ".
                  "substituting for energy the previous value $prev_chg_power");
         $warn .= ";$issue";
         $chg_power = $prev_chg_power;
@@ -787,7 +809,7 @@ sub do_each_second {
         $prev_dis_power = $dis_power;
     } else {
         my $issue = "discharge power is negative";
-        log_warn("$issue: $dis_power; ".
+        log_warn("$issue", ": $dis_power; ".
                  "substituting for energy the previous value $prev_dis_power");
         $warn .= ";$issue";
         $dis_power = $prev_dis_power;
@@ -798,7 +820,7 @@ sub do_each_second {
         my $issue = "load is not ";
         $issue .= $load > 0 ? "from current plausible data" : "positive";
         my ($nl, $pl) = (sprintf("%.2f", $load), sprintf("%.2f", $prev_load));
-        log_warn("$issue: $nl; substituting previous value $pl");
+        log_warn("$issue", ": $nl; substituting previous value $pl");
         $warn .= ";$issue";
         $load = $prev_load;
     }
@@ -917,7 +939,7 @@ do {
                 $power -= $test_extra_pv_power;
             } else {
                 $warn = "no current PV status";
-                log_warn("taking previous PV power value $prev_pv_power "
+                log_warn("taking previous PV power value", " $prev_pv_power "
                          ."as no current PV status data available");
                 ++$count_1pm_miss;
                 $pv_power = $prev_pv_power;
@@ -931,7 +953,7 @@ do {
                 # max(0, $chg - 3.5) # HLG-600H drags ~3.4 W on standby
             } else {
                 $warn .= ";no current charging status";
-                log_warn("taking previous charge power value $prev_chg_power "
+                log_warn("taking previous charge power value", " $prev_chg_power "
                          ."as no current charging status data available");
                 ++$count_chg_miss;
                 $chg_power = $prev_chg_power;
@@ -959,7 +981,7 @@ do {
                     && $dis_power < 0.5;  # suppress flicker < 0.5 W on standby
             } else {
                 $warn .= ";no current discharging status";
-                log_warn("taking previous discharge power value $prev_dis_power"
+                log_warn("taking previous discharge power value", " $prev_dis_power"
                          ." as no current discharging status data available");
                 ++$count_dis_miss;
                 $dis_power = $prev_dis_power;
@@ -967,7 +989,8 @@ do {
         }
         print "$time: $timestamp ($diff_seconds seconds)\n" if $debug;
         if ($diff_seconds > 1) {
-            log_warn("time gap ".++$count_gaps.": $diff_seconds seconds");
+            $count_gaps++;
+            log_warn("time gap: $diff_seconds seconds");
             # linear interpolation of missing time and power
             my $power_step = ($power - $prev_power) / $diff_seconds;
             my  $pv_power_step = ( $pv_power -  $prev_pv_power) / $diff_seconds;

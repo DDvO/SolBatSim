@@ -537,7 +537,7 @@ log_msg("start - will connect to $url"
 # try recover data from any previous run
 # TODO maybe add recovery also from $out_power, $out_load_min or $out_stat
 my $cannot_recover = "cannot recover earlier data for the current hour";
-if ($addr ne "-" && $out_load_sec) {
+sub try_recover {
     my $load_sec = out_name($out_load_sec, $date, ".csv");
     if (open(my $LS, '<' ,$load_sec)) {
         my $prev_second = 0;
@@ -546,7 +546,10 @@ if ($addr ne "-" && $out_load_sec) {
             $line = $_;
         }
         close $LS;
-        die "empty high-resolution load file '$load_sec'" unless defined $line;
+        unless (defined $line) {
+            log_warn("empty high-resolution load file '$load_sec', so $cannot_recover");
+            return;
+        }
         chomp $line;
         my @elems = (split ",", $line);
         my $n = $#elems;
@@ -556,7 +559,17 @@ if ($addr ne "-" && $out_load_sec) {
         my $dt = parse_datetime($date_time);
         die "cannot parse date+time '$date_time' in last line of high-resolution load file '$load_sec'"
             unless $dt;
-        $prev_timestamp = $dt->epoch;
+        $prev_timestamp = $dt->epoch + $n;
+        my $time_diff_now = time() - $prev_timestamp;
+        if ($time_diff_now < 0) {
+            log_warn("last timestamp in high-resolution load file '$load_sec' ".
+                     "is $time_diff_now seconds in the future, so $cannot_recover");
+            $prev_timestamp = 0;
+            return;
+        }
+        log_warn("last timestamp in high-resolution load file '$load_sec' ".
+                 "is $time_diff_now seconds in the past (more than an hour)")
+            if ($time_diff_now >= 3600);
         my ($minute, $second) = ($dt->minute, $dt->second);
 
         my $count = -1;
@@ -627,13 +640,18 @@ if ($addr ne "-" && $out_load_sec) {
                 $load_sum_minute = 0;
             }
         }
-        $prev_timestamp += $n;
     } else {
         log_warn("no previouly produced high-resolution load file '$load_sec' found, so $cannot_recover");
     }
-} elsif ($addr ne "-") {
-    log_warn("as no high-resolution load file <load_sec> is defined, $cannot_recover");
 }
+if ($addr ne "-") {
+    if ($out_load_sec) {
+        try_recover();
+    } else {
+        log_warn("as no high-resolution load file <load_sec> is defined, $cannot_recover");
+    }
+}
+
 
 sub do_before_year {
     my ($date_3em, $first) = @_;

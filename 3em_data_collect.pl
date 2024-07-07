@@ -560,6 +560,7 @@ log_msg("start - will connect to $url"
 my $cannot_recover = "cannot recover earlier data for the current hour";
 sub try_recover {
     my $load_sec = out_name($out_load_sec, $date, ".csv");
+    my $file = "high-resolution load file '$load_sec'";
     if (open(my $LS, '<' ,$load_sec)) {
         my $prev_second = 0;
         my $line;
@@ -568,34 +569,30 @@ sub try_recover {
         }
         close $LS;
         unless (defined $line) {
-            log_warn("empty high-resolution load file '$load_sec', so $cannot_recover");
+            log_warn("empty $file, so $cannot_recover");
             return;
         }
         chomp $line;
         my @elems = (split ",", $line);
         my $n = $#elems;
-        die "cannot parse last line '$line' of high-resolution load file '$load_sec'"
-            if $n < 0;
+        die "cannot parse last line '$line' of $file" if $n < 0;
         my $date_time = $elems[0];
         my $dt = parse_datetime($date_time);
-        die "cannot parse date+time '$date_time' in last line of high-resolution load file '$load_sec'"
-            unless $dt;
+        die "cannot parse date+time '$date_time' in last line of $file" unless $dt;
         $prev_timestamp = $dt->epoch + $n;
         my $time_diff_now = time() - $prev_timestamp;
         if ($time_diff_now < -3600) { # not using 0 here due to below workaround
-            log_warn("last timestamp in high-resolution load file '$load_sec' is "
-                     .(-$time_diff_now).
+            log_warn("last timestamp in $file is ".(-$time_diff_now).
                      " seconds in the future, so $cannot_recover");
             $prev_timestamp = 0;
             return;
         }
         if ($time_diff_now < 0) {
-            log_warn("last timestamp in high-resolution load file '$load_sec' is "
-                     .(-$time_diff_now).
+            log_warn("last timestamp in $file is ".(-$time_diff_now).
                      " seconds in the future, assuming summer time issue");
             $prev_timestamp -= 3600;
         }
-        log_warn("last timestamp in high-resolution load file '$load_sec' ".
+        log_warn("last timestamp in $file ".
                  "is $time_diff_now seconds in the past (more than an hour)")
             if ($time_diff_now >= 3600);
         my ($minute, $second) = ($dt->minute, $dt->second);
@@ -622,7 +619,10 @@ sub try_recover {
                         push @pv_power, $pv;
                     }
                     close $PO;
-                    log_warn("for the time frame according to the last line of the high-resolution load file '$load_sec', the count of PV power values in PV status file '$pvstat': $count does not match number of load values: $n") if $count != $n;
+                    log_warn("for the time frame according to the last line of the $file"
+                             .", the count of PV power values in PV status file"
+                             ." '$pvstat': $count does not match number of"
+                             ." load values: $n") if $count != $n;
                 } else {
                     log_warn("no previouly produced PV status file '$pvstat' found, so $cannot_recover");
                 }
@@ -633,7 +633,7 @@ sub try_recover {
 
         for (my $i = 1; $i <= $n; $i++) {
             my $load = $elems[$i];
-            die "cannot parse power value '$load' in last line '$line' of high-resolution load file '$load_sec'"
+            die "cannot parse power value '$load' in last line '$line' of $file"
                 unless $load =~ m/^\s*-?\d+$/;
             $prev_pv_power = $addr_1pm && $i <= $count ? $pv_power[$i] + 0 : 0;
             my $pv_used = min($load, $prev_pv_power);
@@ -663,13 +663,13 @@ sub try_recover {
             if (++$second >= 60) {
                 $second = 0;
                 $minute++;
-                die "too many power values in last line '$line' of high-resolution load file '$load_sec'"
+                die "too many power values in last line '$line' of $file"
                     if $minute >= 60;
                 $load_sum_minute = 0;
             }
         }
     } else {
-        log_warn("no previouly produced high-resolution load file '$load_sec' found, so $cannot_recover");
+        log_warn("no previouly produced $file found, so $cannot_recover");
     }
 }
 if ($addr ne "-") {

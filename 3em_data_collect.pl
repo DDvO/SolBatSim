@@ -395,7 +395,7 @@ sub get_3em {
         log_warn("3EM status unixtime '$date_3em"."$date_time_sep$time_3em'".
                  " does not very closely match ".
                  "host system time '$date"."$date_time_sep$time'")
-            unless abs($unixtime - $start->epoch) <= 1
+            unless abs($unixtime - time()) <= 1
             # 3 seconds diff can happen easily
     }
     my $power = $powerA + $powerB + $powerC;
@@ -869,8 +869,9 @@ sub do_each_second {
     }
 }
 
-# re-calculate due to potenital delays recovering data from any previous run:
+# re-calculate due to potential delays recovering data from any previous run:
 $start = DateTime->now(time_zone => $tz);
+
 my ($nseconds, $rounds) = (0, 0) if $debug;
 do {
     $rounds++ if $debug;

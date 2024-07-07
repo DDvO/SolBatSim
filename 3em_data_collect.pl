@@ -582,12 +582,18 @@ sub try_recover {
             unless $dt;
         $prev_timestamp = $dt->epoch + $n;
         my $time_diff_now = time() - $prev_timestamp;
-        if ($time_diff_now < 0) {
+        if ($time_diff_now < -3600) { # not using 0 here due to below workaround
             log_warn("last timestamp in high-resolution load file '$load_sec' is "
                      .(-$time_diff_now).
                      " seconds in the future, so $cannot_recover");
             $prev_timestamp = 0;
             return;
+        }
+        if ($time_diff_now < 0) {
+            log_warn("last timestamp in high-resolution load file '$load_sec' is "
+                     .(-$time_diff_now).
+                     " seconds in the future, assuming summer time issue");
+            $prev_timestamp -= 3600;
         }
         log_warn("last timestamp in high-resolution load file '$load_sec' ".
                  "is $time_diff_now seconds in the past (more than an hour)")

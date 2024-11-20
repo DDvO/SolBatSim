@@ -1000,7 +1000,7 @@ do {
         print "$time: $timestamp ($diff_seconds seconds)\n" if $debug;
         if ($diff_seconds > 1) {
             $count_gaps++;
-            log_warn("time gap: $diff_seconds seconds");
+            log_warn("time gap: $diff_seconds seconds") if $diff_seconds > 2;
             # linear interpolation of missing time and power
             my $power_step = ($power - $prev_power) / $diff_seconds;
             my  $pv_power_step = ( $pv_power -  $prev_pv_power) / $diff_seconds;

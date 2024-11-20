@@ -241,13 +241,14 @@ $log = log_name($start->strftime("%Y"));
 open($LOG,'>>', $log) || die "cannot open '$log' for appending: $!";
 
 my $same_warn = 0;
+sub finish_same_warn {
+    return unless $same_warn;
+    log_msg("WARNING: last warning occurred $same_warn more times");
+    $same_warn = 0;
+}
 sub log_msg {
     my $msg = $_[0];
-    unless ($msg =~ /^WARNING: /) {
-        log_msg("WARNING: last warning occurred $same_warn more times")
-            if $same_warn;
-        $same_warn = 0;
-    }
+    finish_same_warn() unless $msg =~ /^WARNING: /;
     my $tim = $addr eq "-" && defined $times[$item] ? $times[$item]
         : "$date $time";
     my $msg = "$tim: $msg\n";
@@ -264,11 +265,9 @@ sub log_warn { my ($main, $extra) = @_;
     if ($main eq $last_warn) {
         $same_warn++;
     } else {
-        log_msg("WARNING: last warning occurred $same_warn more times")
-            if $same_warn;
+        finish_same_warn();
         log_msg("WARNING: $main$extra");
         $last_warn = $main;
-        $same_warn = 0;
     }
 }
 

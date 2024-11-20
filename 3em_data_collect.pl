@@ -444,6 +444,7 @@ sub get_1pm {
     }
 
     my ($name, $timestamp, $url, $user, $pass) = @_;
+    $name .= " 1PM";
     my ($unixtime, $power, $data) = (0, 0, ""); # default: no current data
 
     my $status_json = http_get($url, $user, $pass);
@@ -940,7 +941,7 @@ do {
         $nseconds += $diff_seconds unless $first;
         if ($addr_1pm && $diff_seconds >= 1) {
             ($pv_timestamp, $pv_power, $pv_data) =
-                get_1pm("PV", $timestamp, $url_1pm, $user_1pm, $pass_1pm);
+                get_1pm("pv panel", $timestamp, $url_1pm, $user_1pm, $pass_1pm);
             if ($pv_timestamp) {
                 $pv_power = 0 if 0 < $pv_power
                     && $pv_power < 0.9;  # inverter drags ~0.7 W on standby
@@ -956,7 +957,7 @@ do {
         }
         if ($addr_chg && $diff_seconds >= 1) {
             ($chg_timestamp, my $chg, $chg_data) =
-                get_1pm("charger", $timestamp, $url_chg, $user_chg, $pass_chg);
+                get_1pm("charger ", $timestamp, $url_chg, $user_chg, $pass_chg);
             if ($chg_timestamp) {
                 $chg_power = $chg;
                 # max(0, $chg - 3.5) # HLG-600H drags ~3.4 W on standby
@@ -971,7 +972,7 @@ do {
         if (($addr_dis || $addr_dtu) && $diff_seconds >= 1) {
             my $dtu_timestamp = 0;
             ($dis_timestamp, $dis_power, $dis_data) =
-                get_1pm("discharge data from 1PM", $timestamp, $url_dis,
+                get_1pm("discharg", $timestamp, $url_dis,
                         $user_dis, $pass_dis) if ($addr_dis);
             ($dtu_timestamp, my $dtu_power, my $dtu_data) =
                 get_dtu("discharge data from DTU", $timestamp, $url_dtu,

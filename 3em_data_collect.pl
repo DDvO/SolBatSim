@@ -67,7 +67,7 @@
 use strict;
 use warnings;
 #use IO::Null; # using IO::Null->new, print gives: print() on unopened filehandle GLOB
-use IO::Handle; # for flush
+use IO::Handle; # for flush and autoflush
 use Time::HiRes qw(usleep);
 
 my $i = 0;
@@ -252,7 +252,11 @@ sub log_msg {
         : "$date $time";
     my $msg = "$tim: $msg\n";
     print $msg;
-    print $LOG $msg if defined $LOG;
+    select()->flush(); # https://stackoverflow.com/questions/33812618/can-you-force-flush-output-in-perl
+    if (defined $LOG) {
+        print $LOG $msg;
+        $LOG->flush(); # https://stackoverflow.com/questions/4538767/how-do-i-flush-a-file-in-perl
+    }
 }
 my $last_warn = "";
 sub log_warn { my ($main, $extra) = @_;

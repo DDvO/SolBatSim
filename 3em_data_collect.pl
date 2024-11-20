@@ -489,8 +489,8 @@ sub get_1pm {
     my $date_time_1pm = $date_1pm.$date_time_sep.$time_1pm;
     my $date_time_3em = $date    .$date_time_sep.$time;
     my $d = $unixtime - $timestamp;
-    log_warn("$name status minute_ts deviates from 3EM timestamp by $d seconds",
-             ": $date_time_1pm vs. $date_time_3em")
+    log_warn("status minute_ts deviates from 3EM timestamp",
+             " by $d seconds - $name $date_time_1pm vs. $date_time_3em")
         unless abs($d) <= 3  # 3 seconds diff can happen easily
         || ($date_time_1pm eq ($date_time_3em =~ s/:\d\d$/:00/r));
   end:

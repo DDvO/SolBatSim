@@ -1863,6 +1863,10 @@ my $stored_txt       = $en ? "buffered energy"      : "Zwischenspeicherung";
 my $spill_loss_txt   = $en ? "loss by spill"        : "Verlust durch Überlauf";
 my $AC_coupl_loss_txt= $en ? "loss with AC coupling":"Verlust mit AC-Kopplung";
 my $DC_coupl_loss_txt= $en ?"loss during discharge":"Verlust während Entladung";
+my $DC_non_loss_txt  = $AC_coupled ? "" :
+                       $en ? ", yet does not apply as inverter is needed anyway"
+                           : ", allerdings unberücksichtigt, weil Wechselrichtung ohnehin nötig";
+
 my $PV_discarded_txt = $en ? "PV power discarded"   : "Verworfene PV-Leistung";
 my $charging_loss_txt= $en ? "charging loss"        : "Ladeverlust";
 my $storage_loss_txt = $en ? "storage loss"         : "Speicherverlust";
@@ -2186,7 +2190,6 @@ die "Internal error: overall (loss?) calculation discrepancy $discrepancy: ".
         " - charging loss $charging_loss - storage loss $storage_loss".
         " - coupling loss by 2nd inverter $cpl_loss2".
         " - SoC ".round($soc) : "") if abs($discrepancy) > 0.001; # 1 mWh
-$coupling_loss = 0 if $DC_coupled; # as inverter needed for PV anyway
 
 my $max_txt = $items_per_hour == 60
              ? ($en ? "minute" : "Minute")
@@ -2263,7 +2266,7 @@ if (defined $capacity) {
     print "$storage_loss_txt $en3            =".kWh($storage_loss)
         ." $due_to $seff_txt ".percent($storage_eff)."%\n";
     print "$coupl_loss_txt $en3 $en1 ".($AC_coupled ? "$de2" : "")."=".
-       kWh($coupling_loss)." $due_to $ieff2_txt ".percent($inverter2_eff)."%\n";
+       kWh($coupling_loss)." $due_to $ieff2_txt ".percent($inverter2_eff)."%".$DC_non_loss_txt."\n";
     print "$PV_discarded_txt $en4     =".
         kWh($PV_net_discarded_sum)."\n" if $excl_feed;
     print "$own_storage_txt $en2   =".kWh($PV_used_via_storage)."\n";

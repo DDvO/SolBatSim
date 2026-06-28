@@ -2,10 +2,12 @@
 
 # Collect status data reported each second by a Shelly (Pro) 3EM energy meter,
 # using the http://<3em_addr>/status endpoint (yet not the MQTT interface) and
-# optionally collecting PV status data reported each second by Shelly Plus 1PM
-# using the http://<1pm_addr>/rpc/Shelly.GetStatus endpoint but not MQTT.
+# optionally collecting PV status data reported each second by either
+# a Shelly Plus 1PM using the http://<1pm_addr>/rpc/Shelly.GetStatus endpoint
+# or a Shelly PM Mini Gen3 using http://<1pm-addr>/rpc/pm1.GetStatus?id=0
+# but not MQTT.
 # In this case, the total load reported by the 3EM energy meter is corrected
-# by adding the absolute value of the PV power reported by the 1PM power meter.
+# by adding the absolute value of the PV power reported by the power meter.
 # Optionally collect also the storage battery charger status data reported each
 # second by another Shelly Plus 1PM using http://<chg_addr>/rpc/Shelly.GetStatus
 # In this case, the total load is further corrected by subtracting charge power.
@@ -147,7 +149,9 @@ if ($addr eq "-") {
     $addr_dtu = 0 if ($addr_dtu // "") eq "" || $addr_dtu eq '""';
     $serial_dtu = $ARGV[$i++] || $ENV{Shelly_DTU_SERIAL}; # e.g. 112183822756
     $url      = "http://$addr/status";
-    $url_1pm  = "http://$addr_1pm/rpc/Shelly.GetStatus" if $addr_1pm;
+    $url_1pm  = $addr_1pm eq "pm0"  # TODO generalize
+        ?       "http://$addr_1pm/rpc/pm1.GetStatus?id=0"
+        :       "http://$addr_1pm/rpc/Shelly.GetStatus" if $addr_1pm;
     $url_chg  = "http://$addr_chg/rpc/Shelly.GetStatus" if $addr_chg;
     $url_dis  = "http://$addr_dis/rpc/Shelly.GetStatus" if $addr_dis;
     $url_dtu  = "http://$addr_dtu/api/livedata/status"  if $addr_dtu; # OpenDTU
@@ -453,7 +457,10 @@ sub get_1pm {
         log_warn("$1 for $name");
         goto end;
     }
-    unless ($status_json =~ /"switch:0":\{"id":0, "source":"\w+", "output":\w+, "apower":([\-\d\.]+), "voltage":([\-\d\.]+), "current":([\-\d\.]+), "aenergy":\{"total":([\-\d\.]+),"by_minute":\[([\-\d\.]+),([\-\d\.]+),([\-\d\.]+)\],"minute_ts":(\d+)\},"temperature":\{"tC":([\-\d\.]+), "tF":([\-\d\.]+)\}\}/) {
+    my $pm_mini = $url eq "http://pm0/rpc/pm1.GetStatus?id=0"; # TODO generalize
+    unless ($pm_mini
+            ? $status_json =~ /\{"id":0, "voltage":([\-\d\.]+), "current":([\-\d\.]+), "apower":([\-\d\.]+) ,"freq":([\-\d\.]+),"aenergy":\{"total":([\-\d\.]+),"by_minute":\[([\-\d\.]+),([\-\d\.]+),([\-\d\.]+)\],"minute_ts":(\d+)\},"ret_aenergy":\{"total":([\-\d\.]+),"by_minute":\[([\-\d\.]+),([\-\d\.]+),([\-\d\.]+)\],"minute_ts":(\d+)\}\}/
+            : $status_json =~ /"switch:0":\{"id":0, "source":"\w+", "output":\w+, "apower":([\-\d\.]+), "voltage":([\-\d\.]+), "current":([\-\d\.]+), "aenergy":\{"total":([\-\d\.]+),"by_minute":\[([\-\d\.]+),([\-\d\.]+),([\-\d\.]+)\],"minute_ts":(\d+)\},"temperature":\{"tC":([\-\d\.]+), "tF":([\-\d\.]+)\}\}/) {
         if ($status_json =~ /ERROR:\s?([\s0-9A-Za-z]*)/i) {
             # e.g.: The requested URL could not be retrieved
             log_warn("skipping error response by $name: $1"); # e.g., by Squid
@@ -465,7 +472,9 @@ sub get_1pm {
     }
 
     my ($apower, $voltage, $current, $total, $min1, $min2, $min3, $ts, $tC, $tF)
-        = ($1, $2, $3, $4, $5, $6, $7, $8 + 0, $9, $10);
+        = $pm_mini
+        ? ($3, $1, $2, $5, $6, $7, $8, $9 + 0, undef, undef)
+        : ($1, $2, $3, $4, $5, $6, $7, $8 + 0, $9, $10);
     if ($ts) {
         $unixtime = $ts;
     } elsif ($timestamp) {
@@ -478,7 +487,8 @@ sub get_1pm {
     }
     $current = "0    " if abs($current) < 0.0005;
     # PV power might be reported negative, but usually is reported >= 0
-    ($power, $data) = (abs($apower), "$voltage,$current,$total,$tC");
+    ($power, $data) = (abs($apower), "$voltage,$current,$total");
+    $data .= ",$tC" unless $pm_mini;
 
     my $dt = time_epoch($unixtime);
     my $hour = sprintf("%02d:%02d", $dt->hour, $dt->minute);

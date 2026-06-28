@@ -255,7 +255,7 @@ sub log_msg {
     finish_same_warn() unless $msg =~ /^WARNING: /;
     my $tim = $addr eq "-" && defined $times[$item] ? $times[$item]
         : "$date $time";
-    my $msg = "$tim: $msg\n";
+    $msg = "$tim: $msg\n";
     print $msg;
     select()->flush(); # https://stackoverflow.com/questions/33812618/can-you-force-flush-output-in-perl
     if (defined $LOG) {

@@ -743,7 +743,8 @@ sub do_before_day {
     open($DS, '>>', $disstat)|| die "cannot open '$disstat' for appending: $!";
     open($PW, '>>', $powers) || die "cannot open '$powers' for appending: $!";
 
-    # no header for load output CSV file
+    # header for load output CSV file:
+    print $LS "time [$tz],load each second [W]\n" if -z $load_sec;
     print $SO "time [$tz],PV power [W],charge power [W],discharge power [W],".
         "total_power [W],".
    "powerA [W],pfA,currentA [A],voltageA [V],totalA [Wh],total_returnedA [Wh],".
@@ -779,7 +780,7 @@ sub do_before_hour {
     do_before_day($date_3em, $time_3em, $date_3em_out, $time_3em_out, $first);
 
     return if $first && $prev_timestamp;
-    print $LM "\n" unless (-z $load_min);
+    print $LM (-z $load_min ? "time [$tz],average load each minute [W]\n" : "\n");
     print $LS "\n" unless (-z $load_sec);
     my $date_time_out = $date_3em_out.$date_time_sep_out.$time_3em_out; # $hour_3em
     print $LM $date_time_out;

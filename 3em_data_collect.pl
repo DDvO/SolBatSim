@@ -59,7 +59,7 @@
 # Alternatively to providing options at the CLI, they may also be given
 # via environment variables, which is advisable for sensitive passwords.
 #
-# By default, the time zone is CET (Central European Time)
+# By default, the time zone is +0100 (Central European Time without summer time)
 # without the typical adaptations to DST (Daylight Saving Time) twice a year.
 # This prevents misalignment and confusion on the interpretation of timed data
 # and makes sure that the length of the daily output is the same for all days.
@@ -85,7 +85,8 @@ my $out_disstat  = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_DIS};      # per second
 my $out_log      = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_LOG};      # per event
 
 # time zone for output e.g., "local"
-my $tz = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_TZ} || "CET";
+my $tz = $ARGV[$i++] || $ENV{Shelly_3EM_OUT_TZ} || "+0100"; # CET without summer time
+my $without_summer_time = $tz =~ /^[+-]\d+$/;
 my $date_format        = "%Y-%m-%d";
 my $date_format_out    = $ENV{Shelly_3EM_OUT_DATE_FORMAT} || $date_format;
 my $date_time_sep      = " "; # "T";
@@ -417,8 +418,10 @@ sub get_3em {
     my ($date_3em, $time_3em) = date_time(time_epoch($unixtime));
     if ($check_time) {
         my $time_hour = substr($time, 0, 5);
+        my $allow_deviation = 0;
+        $allow_deviation = (localtime($unixtime))[8] if $without_summer_time; # on currently DST
         log_warn("3EM status time '$hour' does not equal '$time_hour'")
-            unless $hour eq $time_hour;
+            unless $hour eq $time_hour || $allow_deviation;
         my $d = $unixtime - time();
         log_warn("3EM status unixtime deviates from host system time by $d seconds",
                  ": $date_3em$date_time_sep$time_3em vs. $date$date_time_sep$time")

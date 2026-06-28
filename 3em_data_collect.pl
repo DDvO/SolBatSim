@@ -28,9 +28,9 @@
 # * <base_name><load_sec>_<date>.csv    load per second, one line per hour
 # * <base_name><status_name>_<date>.csv status of the three phases per second,
 #                             preceded by PV input, charge, and discharge power
-# * <base_name><pvstat_name>_<date>.csv status of optional PV input per second
-# * <base_name><chgstat_name>_<date>.csv status of optional charger per second
-# * <base_name><disstat_name>_<date>.csv status of optional discharge per second
+# * <base_name><pv_name>_<date>.csv status of optional PV input per second
+# * <base_name><chg_name>_<date>.csv status of optional charger per second
+# * <base_name><dis_name>_<date>.csv status of optional discharge per second
 # * <base_name><log_name>_<year>.txt    info on the data collection per event
 # The script is robust w.r.t. intermittently missing power data by interpolating
 # the data over the range of seconds where no power measurement is available.
@@ -46,12 +46,12 @@
 # day if the file containing the load values per second is available.
 #
 # CLI options, each of which may be a value or "" indicating none/default:
-# <base_name> <power_name> <energy_name>
-# <load_min> <load_sec> <status_name> <pvstat_name> <log_name> <time_zone>
+# <base_name> <power_name> <energy_name> <load_min> <load_sec>
+# <status_name> <pv_name> <chg_name> <dis_name> <log_name> <time_zone>
 # - |(<3em_addr> <1pm_addr> <chg_addr> <dis_addr> <dtu_addr> <dtu_serial>
-#     <3em_username> <3em_password> <1pm_username> <1pm_password>
-#     <chg_username> <chg_password> <dis_username> <dis_password>
-#     <dtu_username> <dtu_password>)
+#     [<3em_username> <3em_password> <1pm_username> <1pm_password>
+#      <chg_username> <chg_password> <dis_username> <dis_password>
+#      <dtu_username> <dtu_password>])
 # where '-' means that data shall be read from subsequent file(s) or STDIN.
 #
 # Alternatively to providing options at the CLI, they may also be given
@@ -62,7 +62,7 @@
 # This prevents misalignment and confusion on the interpretation of timed data
 # and makes sure that the length of the daily output is the same for all days.
 #
-# (c) 2023-2024 David von Oheimb - License: MIT
+# (c) 2023-2026 David von Oheimb - License: MIT
 
 use strict;
 use warnings;
@@ -138,13 +138,13 @@ if ($addr eq "-") {
     $item = -1;
 } else {
     $addr_1pm = $ARGV[$i++] || $ENV{Shelly_1PM_ADDR}; # e.g. 192.168.178.124
-    $addr_1pm = 0 if $addr_1pm eq "";
     $addr_chg = $ARGV[$i++] || $ENV{Shelly_CHG_ADDR}; # e.g. 192.168.178.125
-    $addr_chg = 0 if $addr_chg eq "";
     $addr_dis = $ARGV[$i++] || $ENV{Shelly_DIS_ADDR}; # e.g. 192.168.178.126
-    $addr_dis = 0 if $addr_dis eq "";
     $addr_dtu = $ARGV[$i++] || $ENV{Shelly_DTU_ADDR}; # e.g. 192.168.178.127
-    $addr_dtu = 0 if $addr_dtu eq "";
+    $addr_1pm = 0 if ($addr_1pm // "") eq "" || $addr_1pm eq '""';
+    $addr_chg = 0 if ($addr_chg // "") eq "" || $addr_chg eq '""';
+    $addr_dis = 0 if ($addr_dis // "") eq "" || $addr_dis eq '""';
+    $addr_dtu = 0 if ($addr_dtu // "") eq "" || $addr_dtu eq '""';
     $serial_dtu = $ARGV[$i++] || $ENV{Shelly_DTU_SERIAL}; # e.g. 112183822756
     $url      = "http://$addr/status";
     $url_1pm  = "http://$addr_1pm/rpc/Shelly.GetStatus" if $addr_1pm;
@@ -223,7 +223,7 @@ sub out_name {
     my ($name, $period, $ext) = @_;
     # https://stackoverflow.com/questions/1376607/how-can-i-suppress-stdout-temporarily-in-a-perl-program
     my $none = File::Spec->devnull(); # sink for no-op output
-    return $name ? $out_prefix.$name."_".$period.$ext : $none;
+    return $name && $name ne '""' ? $out_prefix.$name."_".$period.$ext : $none;
 }
 
 my ($energy, $EO);
@@ -631,7 +631,7 @@ sub try_recover {
                     log_warn("no previouly produced PV status file '$pvstat' found, so $cannot_recover");
                 }
             } else {
-                log_warn("as no PV status file <pvstat_name> is defined, $cannot_recover");
+                log_warn("as no PV status file <pv_name> is defined, $cannot_recover");
             }
         }
 
@@ -777,9 +777,12 @@ my $prev_load =  0;
 sub do_each_second {
     my ($timestamp, $warn, $power, $data, $pv_power, $pv_data,
         $chg_power, $chg_data, $dis_power, $dis_data) = @_;
-    my $pvpower  =  $pv_power ? sprintf("%5.1f",  $pv_power) : "    0";
-    my $chgpower = $chg_power ? sprintf("%5.1f", $chg_power) : "    0";
-    my $dispower = $dis_power ? sprintf("%5.1f", $dis_power) : "    0";
+    my $pvpower  =  $pv_power eq "" ? "     " :  $pv_power ? sprintf("%5.1f",  $pv_power) : "    0";
+    my $chgpower = $chg_power eq "" ? "     " : $chg_power ? sprintf("%5.1f", $chg_power) : "    0";
+    my $dispower = $dis_power eq "" ? "     " : $dis_power ? sprintf("%5.1f", $dis_power) : "    0";
+     $pv_power = 0 if  $pv_power eq "";
+    $chg_power = 0 if $chg_power eq "";
+    $dis_power = 0 if $dis_power eq "";
     my $data3 = ",      ,      ,      ";
     if ($data eq "") {
         $data =
@@ -929,9 +932,9 @@ do {
     my $first = $count_seconds == 0;
     my ($timestamp, $power, $data) = get_3em($first);
     # may include PV power, charge, and discharge
-    my ( $pv_timestamp,  $pv_power,  $pv_data) = (0, 0, "");
-    my ($chg_timestamp, $chg_power, $chg_data) = (0, 0, "");
-    my ($dis_timestamp, $dis_power, $dis_data) = (0, 0, "");
+    my ( $pv_timestamp,  $pv_power,  $pv_data) = (0, "", "");
+    my ($chg_timestamp, $chg_power, $chg_data) = (0, "", "");
+    my ($dis_timestamp, $dis_power, $dis_data) = (0, "", "");
     my $diff_seconds = $prev_timestamp ? $timestamp - $prev_timestamp : 1;
     if ($diff_seconds == 0) {
         print "$time: $timestamp (skipping result for same time)\n" if $debug;
@@ -1002,6 +1005,9 @@ do {
             $count_gaps++;
             log_warn("time gap: $diff_seconds seconds") if $diff_seconds > 2;
             # linear interpolation of missing time and power
+             $pv_power = 0 if  $pv_power eq "";
+            $chg_power = 0 if $chg_power eq "";
+            $dis_power = 0 if $dis_power eq "";
             my $power_step = ($power - $prev_power) / $diff_seconds;
             my  $pv_power_step = ( $pv_power -  $prev_pv_power) / $diff_seconds;
             my $chg_power_step = ($chg_power - $prev_chg_power) / $diff_seconds;

@@ -114,6 +114,14 @@ my $time_format        = "%H:%M:%S";
 my $time_format_out    = $ENV{Shelly_3EM_OUT_TIME_FORMAT} || $time_format;
 my $format_out = $date_format_out.$date_time_sep_out.$time_format_out;
 
+use constant SPREC => "%3.0f"; # precsion for printing 1PM power values [W]
+use constant PPREC => "%4.0f"; # precsion for printing 3EM power values [W]
+use constant FPREC => "%+5.2f";# precsion for printing 3EM power factor values
+use constant CPREC => "%3.1f"; # precsion for printing 3EM current values [A]
+use constant VPREC => "%3.0f"; # precsion for printing 3EM voltage values [A]
+use constant TPREC => "%7.0f"; # precsion for printing total energy values [Wh]
+use constant TRPREC => "%.0f"; # precsion for printing total return energy values [Wh]
+
 my (@times, @loads, @ppowers, @phases);
 my $item = -1;
 sub may_fill_last_sec {
@@ -149,7 +157,7 @@ if ($addr eq "-") {
             ++$item;
             my $sum = $pv + $phA + $phB + $phC;
             print("at $time, load $load is not consistent with ".
-                  sprintf("%7.2f", $sum)." = sum of phases ".
+                  sprintf(PPREC, $sum)." = sum of phases ".
                   "$phA + $phB + $phC and PV production $pv")
                 unless abs($load - $sum) <= 0.01;
         } else {
@@ -452,12 +460,10 @@ sub get_3em {
     }
     my $power = $powerA + $powerB + $powerC;
     # may include PV power, charge, and discharge
-    my ($pA, $pB, $pC) = (sprintf("%6.2f", $powerA),
-                          sprintf("%6.2f", $powerB),
-                          sprintf("%6.2f", $powerC));
-    my $dataA = "$pA,$pfA,$currentA,$voltageA,$totalA,$total_returnedA";
-    my $dataB = "$pB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB";
-    my $dataC = "$pC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC";
+    my $fmt =                 PPREC.",".FPREC.",".CPREC.",".VPREC.",".TPREC.",".TRPREC;
+    my $dataA = sprintf($fmt, $powerA,$pfA,$currentA,$voltageA,$totalA,$total_returnedA);
+    my $dataB = sprintf($fmt, $powerB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB);
+    my $dataC = sprintf($fmt, $powerC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC);
     my $data = "$dataA,$dataB,$dataC";
     print "($time, $hour, $unixtime, 3EM $time_3em, $power, $data)\n" if $debug;
 
@@ -512,7 +518,7 @@ sub get_1pm {
         goto end;
     }
     $current = "0    " if abs($current) < 0.0005;
-    $data  = "$voltage,$current,$total";
+    $data  = sprintf(VPREC.",".CPREC.",".TRPREC, $voltage,$current,$total);
     $data .= ",$tC" unless $pm_mini;
 
     my $dt = time_epoch($unixtime);
@@ -834,19 +840,20 @@ sub do_each_second {
      $pv_power = 0 if  $pv_power eq "";
     $chg_power = 0 if $chg_power eq "";
     $dis_power = 0 if $dis_power eq "";
-    my $data3 = ",      ,      ,      ";
+    my $data3 = ",    ,    ,    "; # PPREC,PPREC,PPREC
     if ($data eq "") {
         $data =
-            ",      ,    ,    ,      ,        ,    ".
-            ",      ,    ,    ,      ,        ,       ".
-            ",      ,    ,    ,      ,        ,   ";
+          # PPREC,FPREC,CPREC,VPREC,TPREC,TRPREC
+            ",    ,     ,   ,   ,       ,  ".
+            ",    ,     ,   ,   ,       ,      ".
+            ",    ,     ,   ,   ,       , ";
     } else {
         my @dat = (split ",", $data);
         my $inc = $#dat == 3 ? 1 : 6;  # 1 just in case only powerA/B/C given
         $data3 =
-            ",".sprintf("%6.2f", $dat[1]).
-            ",".sprintf("%6.2f", $dat[1 + $inc]).
-            ",".sprintf("%6.2f", $dat[1 + $inc * 2]);
+            ",".sprintf(PPREC, $dat[1]).
+            ",".sprintf(PPREC, $dat[1 + $inc]).
+            ",".sprintf(PPREC, $dat[1 + $inc * 2]);
     }
 
     my $load = $power + $pv_power - $chg_power + $dis_power;
@@ -904,12 +911,12 @@ sub do_each_second {
         if $power < 0; # Negative active energy, energy meter register 2.8.0
     print $LS ",".round($load); # if $warn eq ""  # suppress unclear load values
     print $SO "$time_3em_out,$pvpower,$chgpower,$dispower,"
-        .sprintf("%+6.2f", $power)."$data,$warn\n";
+        .sprintf(PPREC, $power)."$data,$warn\n";
     print $PO "$time_3em_out,$pvpower$pv_data\n";
     print $CH "$time_3em_out,$chgpower$chg_data\n";
     print $DS "$time_3em_out,$dispower$dis_data\n";
     my $date_time_out = $date_3em_out.$date_time_sep_out.$time_3em_out;
-    print $PW "$date_time_out,".sprintf("%7.2f", $load)
+    print $PW "$date_time_out,".sprintf(PPREC, $load)
         .",$pvpower,$chgpower,$dispower$data3,$warn\n";
         # if $warn eq ""  # suppress unclear power values
 

@@ -746,7 +746,7 @@ sub do_before_day {
     # header for load output CSV file:
     print $LS "time [$tz],load each second [W]\n" if -z $load_sec;
     print $SO "time [$tz],PV power [W],charge power [W],discharge power [W],".
-        "total_power [W],".
+        "power balance [W],".
    "powerA [W],pfA,currentA [A],voltageA [V],totalA [Wh],total_returnedA [Wh],".
    "powerB [W],pfB,currentB [A],voltageB [V],totalB [Wh],total_returnedB [Wh],".
    "powerC [W],pfC,currentC [A],voltageC [V],totalC [Wh],total_returnedC [Wh],".

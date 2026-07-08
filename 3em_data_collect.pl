@@ -114,13 +114,16 @@ my $time_format        = "%H:%M:%S";
 my $time_format_out    = $ENV{Shelly_3EM_OUT_TIME_FORMAT} || $time_format;
 my $format_out = $date_format_out.$date_time_sep_out.$time_format_out;
 
-use constant SPREC => "%3.0f"; # precsion for printing 1PM power values [W]
-use constant PPREC => "%4.0f"; # precsion for printing 3EM power values [W]
-use constant FPREC => "%+5.2f";# precsion for printing 3EM power factor values
-use constant CPREC => "%3.1f"; # precsion for printing 3EM current values [A]
-use constant VPREC => "%3.0f"; # precsion for printing 3EM voltage values [A]
-use constant TPREC => "%7.0f"; # precsion for printing total energy values [Wh]
-use constant TRPREC => "%.0f"; # precsion for printing total return energy values [Wh]
+use constant PPREC1 => "%5.1f"; # precsion for printing 1PM power values [W]
+use constant PPREC  => "%4.0f"; # precsion for printing 3EM power values [W]
+use constant FPREC  => "%+5.2f";# precsion for printing     power factor values
+use constant CPREC1 => "%5.3f"; # precsion for printing 1EM current values [A]
+use constant CPREC  => "%3.1f"; # precsion for printing 3EM current values [A]
+use constant VPREC  => "%3.0f"; # precsion for printing     voltage values [A]
+use constant TPREC1 => "%7.1f"; # precsion for printing 1PM total energy values [Wh]
+use constant TPREC  => "%7.0f"; # precsion for printing 3PM total energy values [Wh]
+use constant TPRECR =>  "%.0f"; # precsion for printing     return energy values [Wh]
+
 
 my (@times, @loads, @ppowers, @phases);
 my $item = -1;
@@ -460,7 +463,7 @@ sub get_3em {
     }
     my $power = $powerA + $powerB + $powerC;
     # may include PV power, charge, and discharge
-    my $fmt =                 PPREC.",".FPREC.",".CPREC.",".VPREC.",".TPREC.",".TRPREC;
+    my $fmt =                 PPREC.",".FPREC.",".CPREC.",".VPREC.",".TPREC.",".TPRECR;
     my $dataA = sprintf($fmt, $powerA,$pfA,$currentA,$voltageA,$totalA,$total_returnedA);
     my $dataB = sprintf($fmt, $powerB,$pfB,$currentB,$voltageB,$totalB,$total_returnedB);
     my $dataC = sprintf($fmt, $powerC,$pfC,$currentC,$voltageC,$totalC,$total_returnedC);
@@ -503,10 +506,10 @@ sub get_1pm {
         goto end;
     }
 
-    my ($apower, $voltage, $current, $total, $min1, $min2, $min3, $ts, $tC, $tF)
+    my ($apower, $voltage, $current, $total, $total_ret, $min1, $min2, $min3, $ts, $tC, $tF)
         = $pm_mini
-        ? ($3, $1, $2, $5, $6, $7, $8, $9 + 0, undef, undef)
-        : ($1, $2, $3, $4, $5, $6, $7, $8 + 0, $9, $10);
+        ? ($3, $1, $2, $5, $10  , $6, $7, $8, $9 + 0, undef, undef)
+        : ($1, $2, $3, $4, undef, $5, $6, $7, $8 + 0, $9, $10);
     if ($ts) {
         $unixtime = $ts;
     } elsif ($timestamp) {
@@ -518,8 +521,10 @@ sub get_1pm {
         goto end;
     }
     $current = "0    " if abs($current) < 0.0005;
-    $data  = sprintf(VPREC.",".CPREC.",".TRPREC, $voltage,$current,$total);
-    $data .= ",$tC" unless $pm_mini;
+    $data  = sprintf(VPREC.",".CPREC1.",".TPREC1, $voltage,$current,$total);
+    $data .= ",".(defined $total_ret ? sprintf(TPRECR, $total_ret) : "");
+    $data .= ",".sprintf(FPREC, $tF) if defined $tF;
+    $data .= ",$tC"   if defined $tF && defined $tC;
 
     my $dt = time_epoch($unixtime);
     my $hour = sprintf("%02d:%02d", $dt->hour, $dt->minute);
@@ -820,9 +825,9 @@ my $prev_load =  0;
 sub do_each_second {
     my ($timestamp, $warn, $power, $data, $pv_power, $pv_data,
         $chg_power, $chg_data, $dis_power, $dis_data) = @_;
-    my $pvpower  =  $pv_power eq "" ? "     " :  $pv_power ? sprintf(SPREC,  $pv_power) : "  0";
-    my $chgpower = $chg_power eq "" ? "     " : $chg_power ? sprintf(SPREC, $chg_power) : "  0";
-    my $dispower = $dis_power eq "" ? ""      : $dis_power ? sprintf(SPREC, $dis_power) : "  0";
+    my $pvpower  =  $pv_power eq "" ? "     " :  $pv_power ? sprintf(PPREC1,  $pv_power) : "  0  ";
+    my $chgpower = $chg_power eq "" ? "     " : $chg_power ? sprintf(PPREC1, $chg_power) : "  0  ";
+    my $dispower = $dis_power eq "" ? ""      : $dis_power ? sprintf(PPREC1, $dis_power) : "  0  ";
     if (($dis_power eq "") != $PV_includes_discharging) {
         my $issue = "unexpected (non-)emptiness of discharge power measurement: ";
         log_warn("$issue", $dis_power eq "" ? "<empty>" : "$dis_power");
@@ -843,7 +848,7 @@ sub do_each_second {
     my $data3 = ",    ,    ,    "; # PPREC,PPREC,PPREC
     if ($data eq "") {
         $data =
-          # PPREC,FPREC,CPREC,VPREC,TPREC,TRPREC
+          # PPREC,FPREC,CPREC,VPREC,TPREC,TPRECR
             ",    ,     ,   ,   ,       ,  ".
             ",    ,     ,   ,   ,       ,      ".
             ",    ,     ,   ,   ,       , ";
